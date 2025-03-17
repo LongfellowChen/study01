@@ -1,0 +1,1651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Maze Game Demo</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #debug {
+            position: absolute;
+            top: 45px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 5px;
+            z-index: 100;
+        }
+
+        #joystick-container {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 150px;
+            height: 150px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border-radius: 50%;
+            z-index: 100;
+            touch-action: none;
+        }
+
+        #joystick {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 70px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            touch-action: none;
+        }
+
+        #attack-button {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 15px 30px;
+            font-size: 20px;
+            background-color: red;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            z-index: 100;
+        }
+
+        #camera-buttons {
+            position: absolute;
+            top: 45px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            display: flex;
+        }
+
+        #camera-buttons button {
+            top: 20px;
+            padding: 8px 12px;
+            margin: 0 5px;
+            font-size: 14px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #camera-buttons button:hover {
+            background-color: #367C39;
+        }
+    </style>
+</head>
+<body>
+    <div id="camera-buttons">
+        <button data-camera="perspective">(1)</button>
+        <button data-camera="firstPerson">(2)</button>
+        <button data-camera="topDown">(3)</button>
+    </div>
+
+    <div id="joystick-container">
+        <div id="joystick"></div>
+    </div>
+    <button id="attack-button">Attack</button>
+    <div id="debug"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MDDLoader.js"></script>
+    <script>
+        function getShortestAngleDifference(currentAngle, targetAngle) {
+            let delta = targetAngle - currentAngle;
+            delta = ((delta + Math.PI) % (2 * Math.PI)) - Math.PI;
+            return delta;
+        }
+
+        function generateMaze(gridSize, cellSize, removeWallPercentage = 0.8, obstacleProbability = 0.2, treasureProbability = 0.1) {
+            const maze = new Array(gridSize);
+            for (let i = 0; i < gridSize; i++) {
+                maze[i] = new Array(gridSize).fill(1);
+            }
+            const obstacles = [];
+            const treasures = [];
+
+            function random(array) {
+                if (Array.isArray(array)) return array[Math.floor(Math.random() * array.length)];
+                return Math.random();
+            }
+
+            function getUnvisitedNeighbors(x, y) {
+                const neighbors = [];
+                const directions = [
+                    { dx: 0, dy: -2 }, { dx: 0, dy: 2 },
+                    { dx: -2, dy: 0 }, { dx: 2, dy: 0 }
+                ];
+                for (const dir of directions) {
+                    const nx = x + dir.dx;
+                    const ny = y + dir.dy;
+                    if (nx > 0 && nx < gridSize - 1 && ny > 0 && ny < gridSize - 1 && maze[nx][ny] === 1) {
+                        neighbors.push({ x: nx, y: ny });
+                    }
+                }
+                return neighbors;
+            }
+
+            function removeWall(x1, y1, x2, y2) {
+                const wx = (x1 + x2) / 2;
+                const wy = (y1 + y2) / 2;
+                maze[wy][wx] = 0;
+            }
+
+            const stack = [];
+            const startX = 1;
+            const startY = 1;
+            maze[startY][startX] = 0;
+            stack.push({ x: startX, y: startY });
+
+            while (stack.length > 0) {
+                const current = stack[stack.length - 1];
+                const neighbors = getUnvisitedNeighbors(current.x, current.y);
+                if (neighbors.length > 0) {
+                    const next = random(neighbors);
+                    removeWall(current.x, current.y, next.x, next.y);
+                    maze[next.x][next.y] = 0;
+                    stack.push({ x: next.x, y: next.y });
+                } else {
+                    stack.pop();
+                }
+            }
+
+            for (let y = 1; y < gridSize - 1; y++) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    if (maze[x][y] === 1 && random() < removeWallPercentage) {
+                        maze[x][y] = 0;
+                    }
+                }
+            }
+
+            for (let y = 1; y < gridSize - 1; y++) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    if (maze[x][y] === 0 && !(x == 1 && y == 1)) {
+                        if (random() < obstacleProbability) {
+                            const durability = Math.floor(random() * 3) + 1;
+                            obstacles.push({ x, z: y, durability });
+                        } else if (random() < treasureProbability) {
+                            const treasureTypes = ['health', 'attack', 'speed', 'bow'];
+                            const type = treasureTypes[Math.floor(Math.random() * treasureTypes.length)];
+                            treasures.push({ x, z: y, type });
+                        }
+                    }
+                }
+            }
+
+            return { maze, obstacles, treasures };
+        }
+
+        function setupScene() {
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(30, 10, 40);
+
+            const renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.2);
+            scene.add(hemiLight);
+
+            const spotLight = new THREE.SpotLight(0xffffff, 3.5);
+            spotLight.position.set(0, 2, 0);
+            spotLight.castShadow = true;
+            spotLight.distance = 50;
+            spotLight.angle = Math.PI / 4;
+            spotLight.penumbra = 0.2;
+            spotLight.decay = 2;
+            scene.add(spotLight);
+
+            spotLight.target = new THREE.Object3D();
+            scene.add(spotLight.target);
+
+            const clock = new THREE.Clock();
+
+            return {
+                scene,
+                camera,
+                renderer,
+                spotLight,
+                controls: null,
+                clock,
+                activeCamera: camera
+            };
+        }
+
+        function createFloor(sceneInfo, gameInfo) {
+            const floorCanvas = document.createElement('canvas');
+            floorCanvas.width = 256;
+            floorCanvas.height = 256;
+            const floorCtx = floorCanvas.getContext('2d');
+            floorCtx.fillStyle = '#8B4513';
+            floorCtx.fillRect(0, 0, 256, 256);
+            floorCtx.strokeStyle = '#A0522D';
+            floorCtx.lineWidth = 2;
+            for (let i = 1; i < 16; i++) {
+                floorCtx.beginPath();
+                floorCtx.moveTo(i * 16, 0);
+                floorCtx.lineTo(i * 16, 256);
+                floorCtx.stroke();
+                floorCtx.beginPath();
+                floorCtx.moveTo(0, i * 16);
+                floorCtx.lineTo(256, i * 16);
+                floorCtx.stroke();
+            }
+
+            const floorTexture = new THREE.CanvasTexture(floorCanvas);
+            floorTexture.wrapS = THREE.RepeatWrapping;
+            floorTexture.wrapT = THREE.RepeatWrapping;
+            const mapSize = gameInfo.gridSize;
+            floorTexture.repeat.set(mapSize / 4, mapSize / 4);
+
+            const floorSize = mapSize * gameInfo.cellSize;
+            const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
+            const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2;
+            floor.position.set(floorSize / 2, 0, floorSize / 2);
+            floor.receiveShadow = true;
+            sceneInfo.scene.add(floor);
+        }
+
+        function createWalls(sceneInfo, gameInfo) {
+            const wallCanvas = document.createElement('canvas');
+            wallCanvas.width = 256;
+            wallCanvas.height = 256;
+            const wallCtx = wallCanvas.getContext('2d');
+            wallCtx.fillStyle = '#808080';
+            wallCtx.fillRect(0, 0, 256, 256);
+            for (let k = 0; k < 10; k++) {
+                wallCtx.beginPath();
+                wallCtx.moveTo(Math.random() * 256, Math.random() * 256);
+                wallCtx.lineTo(Math.random() * 256, Math.random() * 256);
+                wallCtx.strokeStyle = '#A9A9A9';
+                wallCtx.stroke();
+            }
+            const wallTexture = new THREE.CanvasTexture(wallCanvas);
+            const wallGeometry = new THREE.BoxGeometry(gameInfo.cellSize, gameInfo.cellSize, gameInfo.cellSize);
+            const wallMaterial = new THREE.MeshStandardMaterial({ map: wallTexture });
+            const wallBoxes = [];
+            for (let i = 0; i < gameInfo.maze.length; i++) {
+                for (let j = 0; j < gameInfo.maze[i].length; j++) {
+                    if (gameInfo.maze[i][j] === 1) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.position.set(i * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 2, j * gameInfo.cellSize + gameInfo.cellSize / 2);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        sceneInfo.scene.add(wall);
+                        const box = new THREE.Box3().setFromObject(wall);
+                        wallBoxes.push(box);
+                    }
+                }
+            }
+            return wallBoxes;
+        }
+
+        function createObstacles(sceneInfo, gameInfo) {
+            const obstacleGeometry = new THREE.BoxGeometry(gameInfo.cellSize / 2, gameInfo.cellSize / 2, gameInfo.cellSize / 2);
+            const obstacleMeshes = [];
+            const keyIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
+            let doorIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
+            while (doorIndex === keyIndex) doorIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
+
+            let keyPosition, doorPosition;
+
+            gameInfo.obstacles.forEach((obstacle, index) => {
+                const color = obstacle.durability === 1 ? 0x88FF88 : obstacle.durability === 2 ? 0x00CC00 : 0x005500;
+                const obstacleMaterial = new THREE.MeshStandardMaterial({ color });
+                const obstacleMesh = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
+                obstacleMesh.position.set(obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 4, obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2);
+                obstacleMesh.castShadow = true;
+                obstacleMesh.receiveShadow = true;
+
+                obstacleMesh.userData = {
+                    durability: obstacle.durability,
+                    health: obstacle.durability * 10,
+                    hidesKey: index === keyIndex,
+                    hidesDoor: index === doorIndex
+                };
+
+                sceneInfo.scene.add(obstacleMesh);
+                const box = new THREE.Box3().setFromObject(obstacleMesh);
+                gameInfo.wallBoxes.push(box);
+                obstacleMeshes.push(obstacleMesh);
+
+                if (index === keyIndex) keyPosition = obstacleMesh.position.clone();
+                if (index === doorIndex) doorPosition = obstacleMesh.position.clone();
+            });
+
+            const keyGeometry = new THREE.CylinderGeometry(0.2, 0.2, 1, 16);
+            const keyMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            const key = new THREE.Mesh(keyGeometry, keyMaterial);
+            key.position.copy(keyPosition);
+            key.position.y += 0;
+            key.visible = false;
+            sceneInfo.scene.add(key);
+
+            const doorGeometry = new THREE.BoxGeometry(1, 2, 1);
+            const doorMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff, side: THREE.DoubleSide });
+            const door = new THREE.Mesh(doorGeometry, doorMaterial);
+            door.position.copy(doorPosition);
+            door.position.y += 0;
+            door.visible = false;
+            sceneInfo.scene.add(door);
+
+            return { obstacleMeshes, key, door };
+        }
+
+        function createTreasures(sceneInfo, gameInfo) {
+            const geometry = new THREE.SphereGeometry(gameInfo.cellSize / 4, 32, 32);
+
+            gameInfo.treasures.forEach(treasure => {
+                let color;
+                switch (treasure.type) {
+                    case 'health':
+                        color = 0xffff00;
+                        break;
+                    case 'attack':
+                        color = 0xff0000;
+                        break;
+                    case 'speed':
+                        color = 0x0000ff;
+                        break;
+                    case 'bow':
+                        color = 0x8B4513;
+                        break;
+                    default:
+                        color = 0xffff00;
+                }
+                const material = new THREE.MeshStandardMaterial({ color });
+                const treasureMesh = new THREE.Mesh(geometry, material);
+                treasureMesh.position.set(treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 4, treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2);
+                treasureMesh.castShadow = true;
+                treasureMesh.receiveShadow = true;
+                sceneInfo.scene.add(treasureMesh);
+                gameInfo.treasureMeshes.set(treasure, treasureMesh);
+            });
+        }
+
+        function createPlayer(sceneInfo) {
+            let player = null;
+            const gltfLoader = new THREE.GLTFLoader();
+            gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
+                const soldier = gltf.scene;
+                soldier.scale.set(0.5, 0.5, 0.5);
+                soldier.position.set(6, 0, 6);
+
+                const originalMaterials = new Map();
+                soldier.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        originalMaterials.set(child, child.material.clone());
+                    }
+                });
+
+                sceneInfo.scene.add(soldier);
+
+                const mixer = new THREE.AnimationMixer(soldier);
+                const animations = gltf.animations;
+                const idleAction = mixer.clipAction(animations[0]);
+                const runAction = mixer.clipAction(animations[3]);
+                const attackAction = mixer.clipAction(animations[5]);
+                idleAction.play();
+
+                const backgroundCanvas = document.createElement('canvas');
+                backgroundCanvas.width = 128;
+                backgroundCanvas.height = 16;
+                const backgroundCtx = backgroundCanvas.getContext('2d');
+                backgroundCtx.fillStyle = '#555555';
+                backgroundCtx.fillRect(0, 0, 128, 16);
+
+                const healthCanvas = document.createElement('canvas');
+                healthCanvas.width = 128;
+                healthCanvas.height = 16;
+                const healthCtx = healthCanvas.getContext('2d');
+                healthCtx.fillStyle = '#00ff00';
+                healthCtx.fillRect(0, 0, 128, 16);
+
+                const backgroundTexture = new THREE.CanvasTexture(backgroundCanvas);
+                const healthTexture = new THREE.CanvasTexture(healthCanvas);
+
+                const backgroundSpriteMaterial = new THREE.SpriteMaterial({ map: backgroundTexture });
+                const healthSpriteMaterial = new THREE.SpriteMaterial({ map: healthTexture });
+
+                const backgroundSprite = new THREE.Sprite(backgroundSpriteMaterial);
+                backgroundSprite.scale.set(2, 0.25, 1);
+                backgroundSprite.position.set(0, 5, 0);
+
+                const healthSprite = new THREE.Sprite(healthSpriteMaterial);
+                healthSprite.scale.set(2, 0.25, 1);
+                healthSprite.position.set(0, 5, 0);
+
+                soldier.add(backgroundSprite);
+                soldier.add(healthSprite);
+
+                player = { 
+                    soldier, 
+                    mixer, 
+                    idleAction, 
+                    runAction, 
+                    attackAction, 
+                    currentAction: idleAction, 
+                    targetAngle: 0, 
+                    health: 100,
+                    maxHealth: 100,
+                    isAttacking: false,
+                    attackCooldown: 0,
+                    baseAttackPower: 10,
+                    attackPowerBoost: 0,
+                    attackPowerBoostEndTime: 0,
+                    maxAttackCooldown: 0.2,
+                    healthBar: healthSprite,
+                    healthBarBackground: backgroundSprite,
+                    healthCanvas,
+                    healthCtx,
+                    lastHealTime: 0,
+                    healInterval: 1,
+                    isFlashing: false,
+                    flashDuration: 0.1,
+                    flashTimer: 0,
+                    originalMaterials: originalMaterials,
+                    hasKey: false,
+                    faceMouseTimer: 0,
+                    shiftToggle: false,
+                    baseSoldierSpeed: 10,
+                    speedMultiplier: 1,
+                    speedPowerUpEndTime: 0,
+                    attackTriggeredByMouse: false,
+                    hasBow: true,
+                    arrowCount: 1
+                };
+            }, undefined, (error) => {
+                console.error('Model loading failed:', error);
+            });
+            return () => player;
+        }
+
+        function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
+            const player = playerInfo.getPlayer();
+            if (!player || !player.soldier) return;
+
+            const { soldier, mixer, idleAction, runAction, attackAction, currentAction } = player;
+
+            soldier.visible = gameMaster.cameraMode !== 'firstPerson';
+
+            if (player.isFlashing) {
+                player.flashTimer -= delta;
+                const flashIntensity = Math.abs(Math.sin(player.flashTimer * Math.PI * 10));
+                player.soldier.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material.color.setRGB(1, flashIntensity / 2, flashIntensity / 2);
+                    }
+                });
+                if (player.flashTimer <= 0) {
+                    player.isFlashing = false;
+                    player.soldier.traverse((child) => {
+                        if (child.isMesh && player.originalMaterials.has(child)) {
+                            child.material = player.originalMaterials.get(child).clone();
+                        }
+                    });
+                }
+            }
+
+            const rotationSpeed = 5;
+            const soldierSpeed = player.baseSoldierSpeed * player.speedMultiplier;
+            const playerCollisionRadius = 1;
+
+            const moveDirection = new THREE.Vector3();
+            let isRotating = false;
+
+            const currentTime = Date.now();
+            if (player.attackPowerBoostEndTime > 0 && currentTime > player.attackPowerBoostEndTime) {
+                player.attackPowerBoost = 0;
+                player.attackPowerBoostEndTime = 0;
+                console.log("Attack power-up expired.");
+            }
+
+            if (player.speedPowerUpEndTime > 0 && currentTime > player.speedPowerUpEndTime) {
+                player.speedMultiplier = 1;
+                player.speedPowerUpEndTime = 0;
+                console.log("Speed power-up expired.");
+            }
+
+            if (gameMaster.cameraMode === 'firstPerson') {
+                if (inputInfo.keys.joystick.y !== 0) {
+                    const forwardDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(soldier.quaternion).normalize();
+                    moveDirection.add(forwardDirection.multiplyScalar(-inputInfo.keys.joystick.y));
+                }
+                if (inputInfo.keys.joystick.x !== 0) {
+                    soldier.rotation.y -= inputInfo.keys.joystick.x * rotationSpeed * delta;
+                    isRotating = true;
+                }
+            } else {
+                const forward = new THREE.Vector3();
+                const left = new THREE.Vector3();
+                sceneInfo.camera.getWorldDirection(forward);
+                forward.y = 0;
+                forward.normalize();
+                left.copy(forward).applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2).normalize();
+
+                if (inputInfo.keys.w) moveDirection.add(forward);
+                if (inputInfo.keys.s) moveDirection.sub(forward);
+                if (inputInfo.keys.a) moveDirection.sub(left);
+                if (inputInfo.keys.d) moveDirection.add(left);
+
+                if (inputInfo.keys.joystick.x !== 0 || inputInfo.keys.joystick.y !== 0) {
+                    const joystickDirection = new THREE.Vector3(
+                        inputInfo.keys.joystick.x,
+                        0,
+                        -inputInfo.keys.joystick.y
+                    ).normalize();
+                    moveDirection.add(left.clone().multiplyScalar(joystickDirection.x));
+                    moveDirection.add(forward.clone().multiplyScalar(joystickDirection.z));
+                }
+
+                moveDirection.normalize();
+            }
+
+            if (gameMaster.cameraMode === 'firstPerson') {
+                const forward = new THREE.Vector3();
+                const left = new THREE.Vector3();
+                sceneInfo.camera.getWorldDirection(forward);
+                forward.y = 0;
+                forward.normalize();
+                left.copy(forward).applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2).normalize();
+
+                if (inputInfo.keys.w) moveDirection.add(forward);
+                if (inputInfo.keys.s) moveDirection.sub(forward);
+
+                if (inputInfo.keys.shift || inputInfo.keys.mouseLeft) {
+                    if (inputInfo.keys.a) moveDirection.sub(left);
+                    if (inputInfo.keys.d) moveDirection.add(left);
+                } else {
+                    if (inputInfo.keys.a) {
+                        soldier.rotation.y += rotationSpeed * delta;
+                        isRotating = true;
+                    }
+                    if (inputInfo.keys.d) {
+                        soldier.rotation.y -= rotationSpeed * delta;
+                        isRotating = true;
+                    }
+                }
+
+                if (inputInfo.keys.mouseLeft && gameMaster.cameraMode === 'firstPerson') {
+                    let mv = inputInfo.keys.mouseMovementX;
+                    if (mv > 32) mv = 32;
+                    if (mv < -32) mv = -32;
+                    soldier.rotation.y -= mv * 0.01;
+                }
+            }
+
+            const isMoving = moveDirection.lengthSq() > 0 || isRotating;
+
+            if (player.attackCooldown > 0) {
+                player.attackCooldown -= delta;
+            }
+
+            if (player.shiftToggle && gameMaster.cameraMode !== 'firstPerson') {
+                player.faceMouseTimer -= delta;
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(inputInfo.mouse, sceneInfo.camera);
+                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+                const intersect = new THREE.Vector3();
+                raycaster.ray.intersectPlane(plane, intersect);
+                const directionToMouse = new THREE.Vector3().subVectors(intersect, soldier.position).normalize();
+                directionToMouse.y = 0;
+                const targetAngle = Math.atan2(directionToMouse.x, directionToMouse.z);
+                const currentAngle = soldier.rotation.y;
+                const deltaAngle = getShortestAngleDifference(currentAngle, targetAngle);
+                soldier.rotation.y += deltaAngle * rotationSpeed * delta;
+            }
+
+            if ((inputInfo.keys.space || player.attackTriggeredByMouse) && player.attackCooldown <= 0) {
+                console.log("Player attacking");
+                player.isAttacking = true;
+                if (currentAction !== attackAction) {
+                    if (currentAction) currentAction.fadeOut(0.2);
+                    attackAction.reset().fadeIn(0.2).play();
+                    player.currentAction = attackAction;
+                }
+                player.attackCooldown = player.maxAttackCooldown;
+                player.attackTriggeredByMouse = false;
+
+                const playerForward = new THREE.Vector3(0, 0, 1).applyQuaternion(soldier.quaternion).normalize();
+
+                if (player.hasBow && player.arrowCount > 0) {
+                    // 弓箭攻擊
+                    //player.arrowCount--;
+                    console.log(`Arrow shot! Remaining arrows: ${player.arrowCount}`);
+                    const arrowGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.2, 4);
+                    const arrowMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
+                    const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial);
+                    arrow.position.copy(soldier.position);
+                    arrow.position.y += 1;
+                    arrow.quaternion.copy(soldier.quaternion);
+                    sceneInfo.scene.add(arrow);
+
+                    const arrowSpeed = 20;
+                    const arrowLifetime = 2;
+                    let arrowTime = 0;
+
+                    const updateArrow = () => {
+                        arrowTime += delta;
+                        if (arrowTime > arrowLifetime) {
+                            sceneInfo.scene.remove(arrow);
+                            return;
+                        }
+
+                        const moveStep = playerForward.clone().multiplyScalar(arrowSpeed * delta);
+                        arrow.position.add(moveStep);
+
+                        // 檢測牆壁碰撞
+                        const arrowSphere = new THREE.Sphere(arrow.position, 0.1);
+                        for (const wallBox of gameInfo.wallBoxes) {
+                            if (wallBox.intersectsSphere(arrowSphere)) {
+                                console.log("Arrow hit a wall!");
+                                sceneInfo.scene.remove(arrow);
+                                return;
+                            }
+                        }
+
+                        // 檢測敵人碰撞
+                        for (let i = 0; i < enemyInfo.enemies.length; i++) {
+                            const enemy = enemyInfo.enemies[i];
+                            const distance = arrow.position.distanceTo(enemy.position);
+                            if (distance < 2) {
+                                enemy.health -= player.baseAttackPower + player.attackPowerBoost;
+                                console.log(`Enemy ${i} hit by arrow! HP: ${enemy.health}`);
+                                sceneInfo.scene.remove(arrow);
+                                if (enemy.health <= 0) {
+                                    sceneInfo.scene.remove(enemy);
+                                    enemyInfo.enemies.splice(i, 1);
+                                }
+                                return;
+                            }
+                        }
+
+                        // 檢測障礙物碰撞
+                        for (let i = 0; i < gameInfo.obstacleMeshes.length; i++) {
+                            const obstacle = gameInfo.obstacleMeshes[i];
+                            const distance = arrow.position.distanceTo(obstacle.position);
+                            if (distance < 2) {
+                                obstacle.userData.health -= player.baseAttackPower + player.attackPowerBoost;
+                                console.log(`Obstacle ${i} hit by arrow! HP: ${obstacle.userData.health}`);
+                                sceneInfo.scene.remove(arrow);
+                                if (obstacle.userData.health <= 0) {
+                                    if (obstacle.userData.hidesKey) {
+                                        gameInfo.key.visible = true;
+                                        console.log("鑰匙出現！");
+                                    }
+                                    if (obstacle.userData.hidesDoor) {
+                                        gameInfo.door.visible = true;
+                                        console.log("門出現！");
+                                    }
+                                    sceneInfo.scene.remove(obstacle);
+                                    gameInfo.obstacleMeshes.splice(i, 1);
+                                    gameInfo.wallBoxes.splice(gameInfo.wallBoxes.findIndex(box => box.containsPoint(obstacle.position)), 1);
+                                }
+                                return;
+                            }
+                        }
+
+                        requestAnimationFrame(updateArrow);
+                    };
+                    updateArrow();
+                } else {
+                    // 近戰攻擊
+                    enemyInfo.enemies.forEach((enemy, index) => {
+                        const distance = soldier.position.distanceTo(enemy.position);
+                        if (distance < 3) {
+                            const enemyDirection = new THREE.Vector3().subVectors(enemy.position, soldier.position).normalize();
+                            const angleCos = playerForward.dot(enemyDirection);
+                            const angleDeg = Math.acos(angleCos) * 180 / Math.PI;
+                            if (angleDeg <= 60) {
+                                enemy.health -= player.baseAttackPower + player.attackPowerBoost;
+                                console.log(`Enemy ${index} HP: ${enemy.health} (正面攻擊)`);
+                                if (enemy.health <= 0) {
+                                    sceneInfo.scene.remove(enemy);
+                                    enemyInfo.enemies.splice(index, 1);
+                                }
+                                player.faceMouseTimer = 1;
+                            } else {
+                                console.log(`Enemy ${index} 未受傷 (不在正面, 角度: ${angleDeg.toFixed(2)}°)`);
+                            }
+                        }
+                    });
+
+                    gameInfo.obstacleMeshes.forEach((obstacle, index) => {
+                        const distance = soldier.position.distanceTo(obstacle.position);
+                        if (distance < 3) {
+                            const obstacleDirection = new THREE.Vector3().subVectors(obstacle.position, soldier.position).normalize();
+                            const angleCos = playerForward.dot(obstacleDirection);
+                            const angleDeg = Math.acos(angleCos) * 180 / Math.PI;
+                            if (angleDeg <= 60) {
+                                obstacle.userData.health -= player.baseAttackPower + player.attackPowerBoost;
+                                console.log(`Obstacle ${index} HP: ${obstacle.userData.health}`);
+                                if (obstacle.userData.health <= 0) {
+                                    if (obstacle.userData.hidesKey) {
+                                        gameInfo.key.visible = true;
+                                        console.log("鑰匙出現！");
+                                    }
+                                    if (obstacle.userData.hidesDoor) {
+                                        gameInfo.door.visible = true;
+                                        console.log("門出現！");
+                                    }
+                                    sceneInfo.scene.remove(obstacle);
+                                    gameInfo.obstacleMeshes.splice(index, 1);
+                                    gameInfo.wallBoxes.splice(gameInfo.wallBoxes.findIndex(box => box.containsPoint(obstacle.position)), 1);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                setTimeout(() => {
+                    player.isAttacking = false;
+                    if (!isMoving && currentAction !== idleAction) {
+                        if (currentAction) currentAction.fadeOut(0.2);
+                        idleAction.reset().fadeIn(0.2).play();
+                        player.currentAction = idleAction;
+                    }
+                }, player.maxAttackCooldown * 1000 / 2);
+            } else if (isMoving && !player.isAttacking) {
+                if (gameMaster.cameraMode !== 'firstPerson') {
+                    const angle = Math.atan2(moveDirection.x, moveDirection.z);
+                    player.targetAngle = angle;
+                    const currentAngle = soldier.rotation.y;
+                    const deltaAngle = getShortestAngleDifference(currentAngle, angle);
+                    soldier.rotation.y += deltaAngle * rotationSpeed * delta;
+                }
+
+                const moveDistance = soldierSpeed * delta;
+                let velocity = moveDirection.clone().multiplyScalar(moveDistance);
+                let newPosition = soldier.position.clone().add(velocity);
+                const soldierSphere = new THREE.Sphere(newPosition, playerCollisionRadius);
+
+                let collision = false;
+                let wallNormal = null;
+
+                for (const wallBox of gameInfo.wallBoxes) {
+                    if (wallBox.intersectsSphere(soldierSphere)) {
+                        collision = true;
+                        const closestPoint = new THREE.Vector3();
+                        wallBox.clampPoint(soldier.position, closestPoint);
+                        wallNormal = soldier.position.clone().sub(closestPoint).normalize();
+                        wallNormal.y = 0;
+                        break;
+                    }
+                }
+
+                for (const enemy of enemyInfo.enemies) {
+                    if (newPosition.distanceTo(enemy.position) < playerCollisionRadius + 1) {
+                        collision = true;
+                        wallNormal = soldier.position.clone().sub(enemy.position).normalize();
+                        wallNormal.y = 0;
+                        break;
+                    }
+                }
+
+                if (!collision) {
+                    soldier.position.copy(newPosition);
+                } else if (wallNormal) {
+                    const dot = velocity.dot(wallNormal);
+                    if (dot < 0) {
+                        const normalComponent = wallNormal.clone().multiplyScalar(dot);
+                        const slideVelocity = velocity.clone().sub(normalComponent);
+                        newPosition = soldier.position.clone().add(slideVelocity);
+                        const slideSphere = new THREE.Sphere(newPosition, playerCollisionRadius);
+                        let slideCollision = false;
+
+                        for (const wallBox of gameInfo.wallBoxes) {
+                            if (wallBox.intersectsSphere(slideSphere)) {
+                                slideCollision = true;
+                                break;
+                            }
+                        }
+                        for (const enemy of enemyInfo.enemies) {
+                            if (newPosition.distanceTo(enemy.position) < playerCollisionRadius + 1) {
+                                slideCollision = true;
+                                break;
+                            }
+                        }
+
+                        if (!slideCollision) {
+                            soldier.position.copy(newPosition);
+                        }
+                    }
+                }
+                if (currentAction !== runAction) {
+                    if (currentAction) currentAction.fadeOut(0.2);
+                    runAction.reset().fadeIn(0.2).play();
+                    player.currentAction = runAction;
+                }
+            } else if (!player.isAttacking && currentAction !== idleAction) {
+                if (currentAction) currentAction.fadeOut(0.2);
+                idleAction.reset().fadeIn(0.2).play();
+                player.currentAction = idleAction;
+            }
+
+            for (let i = 0; i < gameInfo.treasures.length; i++) {
+                const treasure = gameInfo.treasures[i];
+                const treasureMesh = gameInfo.treasureMeshes.get(treasure);
+
+                if (treasureMesh && soldier.position.distanceTo(treasureMesh.position) < 1 + (gameInfo.cellSize / 4)) {
+                    switch (treasure.type) {
+                        case 'health':
+                            player.health += 10;
+                            player.health = Math.min(player.health, player.maxHealth);
+                            console.log("Found health treasure! Health +10. Current HP:", player.health);
+                            break;
+                        case 'attack':
+                            player.attackPowerBoost = 5;
+                            player.attackPowerBoostEndTime = Date.now() + 10000;
+                            console.log("Found attack power-up! Attack power +5 for 10 seconds.");
+                            break;
+                        case 'speed':
+                            player.speedMultiplier = 1.5;
+                            player.speedPowerUpEndTime = Date.now() + 10000;
+                            console.log("Found speed power-up! Speed increased for 10 seconds.");
+                            break;
+                        case 'bow':
+                            player.hasBow = true;
+                            player.arrowCount += 50;
+                            console.log(`Found bow treasure! Arrows increased by 50. Total arrows: ${player.arrowCount}`);
+                            break;
+                    }
+                    sceneInfo.scene.remove(treasureMesh);
+                    gameInfo.treasureMeshes.delete(treasure);
+                    gameInfo.treasures.splice(i, 1);
+                    i--;
+                }
+            }
+
+            if (gameInfo.key.visible && soldier.position.distanceTo(gameInfo.key.position) < 2) {
+                player.hasKey = true;
+                gameInfo.key.visible = false;
+                console.log("Obtained key!");
+            }
+            if (gameInfo.door.visible && player.hasKey && soldier.position.distanceTo(gameInfo.door.position) < 2) {
+                console.log("Entered door, proceeding to next level!");
+                gameMaster.newGame = true;
+            }
+
+            mixer.update(delta);
+
+            const spotlightDirection = new THREE.Vector3(0, 25, -15);
+            spotlightDirection.applyQuaternion(soldier.quaternion);
+            spotlightDirection.normalize();
+            const lightPosition = soldier.position.clone().add(spotlightDirection.multiplyScalar(10));
+            lightPosition.y += 15;
+            sceneInfo.spotLight.position.copy(lightPosition);
+
+            const direction = new THREE.Vector3(0, 0, 5).applyQuaternion(soldier.quaternion);
+            const lightDistance = 5;
+            sceneInfo.spotLight.target.position.copy(soldier.position.clone().add(direction.multiplyScalar(lightDistance)));
+            sceneInfo.scene.add(sceneInfo.spotLight.target);
+
+            const elapsedTime = sceneInfo.clock.getElapsedTime();
+            if (elapsedTime - player.lastHealTime >= player.healInterval) {
+                if (player.health < player.maxHealth) {
+                    player.health += 1;
+                    console.log("Player healed +1, current HP:", player.health);
+                }
+                player.lastHealTime = elapsedTime;
+            }
+
+            if (player.healthBar && player.healthBarBackground) {
+                const healthPercentage = player.health / player.maxHealth;
+                player.healthCtx.clearRect(0, 0, player.healthCanvas.width, player.healthCanvas.height);
+                player.healthCtx.fillStyle = healthPercentage > 0.3 ? '#00ff00' : '#ff0000';
+                player.healthCtx.fillRect(0, 0, player.healthCanvas.width * healthPercentage, player.healthCanvas.height);
+                player.healthBar.material.map.needsUpdate = true;
+            }
+
+            if (gameMaster.cameraMode === 'firstPerson') {
+                sceneInfo.camera.position.copy(soldier.position);
+                sceneInfo.camera.position.y += 2;
+                sceneInfo.camera.rotation.y = soldier.rotation.y + Math.PI;
+            } else if (gameMaster.cameraMode === 'topDown') {
+                sceneInfo.camera.position.set(soldier.position.x, 20, soldier.position.z);
+                sceneInfo.camera.lookAt(soldier.position);
+            } else if (sceneInfo.controls) {  
+                sceneInfo.controls.target.copy(player && player.soldier ? player.soldier.position : new THREE.Vector3(30, 0, 30));
+                sceneInfo.controls.update();
+            }
+
+            document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
+        }
+
+        function spawnEnemy(sceneInfo, gameInfo, enemyInfo, maxEnemies) {
+            if (enemyInfo.enemies.length >= maxEnemies) return;
+
+            const gltfLoader = new THREE.GLTFLoader();
+            gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
+                const enemy = gltf.scene;
+                enemy.scale.set(0.5, 0.5, 0.5);
+
+                let spawnX, spawnZ;
+                let validPosition = false;
+
+                do {
+                    spawnX = Math.floor(Math.random() * gameInfo.gridSize);
+                    spawnZ = Math.floor(Math.random() * gameInfo.gridSize);
+                    if (spawnX == 1 && spawnZ == 1) continue;
+                    if (gameInfo.maze[spawnZ][spawnX] !== 0) continue;
+
+                    validPosition = true;
+                    for (const obstacle of gameInfo.obstacles) {
+                        if (obstacle.x === spawnX && obstacle.z === spawnZ) {
+                            validPosition = false;
+                            break;
+                        }
+                    }
+                } while (!validPosition);
+
+                enemy.position.set(spawnX * gameInfo.cellSize + gameInfo.cellSize / 2, 0, spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2);
+
+                enemy.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        child.material.color.setRGB(1, 0, 0);
+                    }
+                });
+                sceneInfo.scene.add(enemy);
+
+                enemy.mixer = new THREE.AnimationMixer(enemy);
+                const animations = gltf.animations;
+                enemy.idleAction = enemy.mixer.clipAction(animations[0]);
+                enemy.runAction = enemy.mixer.clipAction(animations[3]);
+                enemy.attackAction = enemy.mixer.clipAction(animations[5]);
+                enemy.currentAction = enemy.idleAction;
+                enemy.idleAction.play();
+
+                const backgroundCanvas = document.createElement('canvas');
+                backgroundCanvas.width = 128;
+                backgroundCanvas.height = 16;
+                const backgroundCtx = backgroundCanvas.getContext('2d');
+                backgroundCtx.fillStyle = '#555555';
+                backgroundCtx.fillRect(0, 0, 128, 16);
+
+                const healthCanvas = document.createElement('canvas');
+                healthCanvas.width = 128;
+                healthCanvas.height = 16;
+                const healthCtx = healthCanvas.getContext('2d');
+                healthCtx.fillStyle = '#00ff00';
+                healthCtx.fillRect(0, 0, 128, 16);
+
+                const backgroundTexture = new THREE.CanvasTexture(backgroundCanvas);
+                const healthTexture = new THREE.CanvasTexture(healthCanvas);
+
+                const backgroundSpriteMaterial = new THREE.SpriteMaterial({ map: backgroundTexture });
+                const healthSpriteMaterial = new THREE.SpriteMaterial({ map: healthTexture });
+
+                const backgroundSprite = new THREE.Sprite(backgroundSpriteMaterial);
+                backgroundSprite.scale.set(2, 0.25, 1);
+                backgroundSprite.position.set(0, 5, 0);
+
+                const healthSprite = new THREE.Sprite(healthSpriteMaterial);
+                healthSprite.scale.set(2, 0.25, 1);
+                healthSprite.position.set(0, 5, 0);
+
+                enemy.add(backgroundSprite);
+                enemy.add(healthSprite);
+
+                enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
+                enemy.health = 50;
+                enemy.maxHealth = 50;
+                enemy.isAttacking = false;
+                enemy.attackCooldown = 0;
+                enemy.healthBar = healthSprite;
+                enemy.healthBarBackground = backgroundSprite;
+                enemy.healthCanvas = healthCanvas;
+                enemy.healthCtx = healthCtx;
+                enemyInfo.enemies.push(enemy);
+                console.log("Spawn Enemy at:", spawnX, spawnZ);
+            }, undefined, (error) => {
+                console.error('加載 Xbot.glb 失敗:', error);
+            });
+        }
+
+        function updateEnemies(enemyInfo, playerInfo, gameInfo, delta, inputInfo) {
+            const player = playerInfo.getPlayer();
+            const idleRange = 2;
+            const attackRange = 3;
+            const patrolSpeed = 2;
+            const chaseSpeed = 5;
+            const rotationSpeed = 5;
+            const enemyCollisionRadius = 1;
+            const fieldOfView = Math.PI * 2 / 3;
+            const detectionRange = 15;
+            const obstacleAvoidanceDistance = 2;
+            const alertRange = 15;
+
+            enemyInfo.enemies.forEach(enemy => {
+                if (!enemy.mixer) return;
+                enemy.mixer.update(delta);
+
+                if (enemy.attackCooldown > 0) {
+                    enemy.attackCooldown -= delta;
+                }
+
+                const distanceToPlayer = player && player.soldier ? enemy.position.distanceTo(player.soldier.position) : Infinity;
+                const distanceToTarget = enemy.targetPosition ? enemy.position.distanceTo(enemy.targetPosition) : Infinity;
+
+                if (distanceToPlayer < attackRange) {
+                    enemy.healthBar.visible = true;
+                    enemy.healthBarBackground.visible = true;
+                } else {
+                    enemy.healthBar.visible = false;
+                    enemy.healthBarBackground.visible = false;
+                }
+
+                if (player && player.soldier && distanceToPlayer < attackRange && enemy.attackCooldown <= 0) {
+                    console.log("Enemy attacking");
+                    enemy.isAttacking = true;
+                    if (enemy.currentAction !== enemy.attackAction) {
+                        if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                        enemy.attackAction.reset().fadeIn(0.2).play();
+                        enemy.currentAction = enemy.attackAction;
+                    }
+                    enemy.attackCooldown = 2;
+
+                    player.health -= 10;
+                    player.isFlashing = true;
+                    player.flashTimer = player.flashDuration;
+                    player.faceMouseTimer = 3;
+
+                    console.log(`Player HP: ${player.health}`);
+                    if (player.health <= 0) {
+                        console.log("Player defeated!");
+                    }
+
+                    setTimeout(() => {
+                        enemy.isAttacking = false;
+                        if (canSeePlayer(enemy, player.soldier, gameInfo.wallBoxes, fieldOfView) && enemy.currentAction !== enemy.runAction) {
+                            if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                            enemy.runAction.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.runAction;
+                        } else if (distanceToPlayer <= idleRange && enemy.currentAction !== enemy.idleAction) {
+                            if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                            enemy.idleAction.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.idleAction;
+                        }
+                    }, 700);
+                } else if (!enemy.isAttacking) {
+                    if (player && player.soldier && distanceToPlayer <= idleRange) {
+                        if (enemy.currentAction !== enemy.idleAction) {
+                            if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                            enemy.idleAction.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.idleAction;
+                        }
+                    } else if (player && player.soldier && canSeePlayer(enemy, player.soldier, gameInfo.wallBoxes, fieldOfView) && distanceToPlayer <= detectionRange) {
+                        enemy.targetPosition = player.soldier.position.clone();
+                        enemy.isChasing = true;
+                        alertNearbyEnemies(gameInfo.wallBoxes, enemy, enemyInfo.enemies, player.soldier, alertRange);
+                        const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
+                        const targetAngleEnemy = Math.atan2(direction.x, direction.z);
+                        const deltaAngleEnemy = getShortestAngleDifference(enemy.rotation.y, targetAngleEnemy);
+                        enemy.rotation.y += deltaAngleEnemy * rotationSpeed * delta;
+
+                        const moveStep = direction.multiplyScalar(chaseSpeed * delta);
+                        const newPosition = enemy.position.clone().add(moveStep);
+                        let collision = false;
+                        const enemySphere = new THREE.Sphere(newPosition, enemyCollisionRadius);
+                        for (const wallBox of gameInfo.wallBoxes) {
+                            if (wallBox.intersectsSphere(enemySphere)) {
+                                collision = true;
+                                break;
+                            }
+                        }
+                        if (player && player.soldier && newPosition.distanceTo(player.soldier.position) < enemyCollisionRadius + 1) {
+                            collision = true;
+                        }
+                        for (const otherEnemy of enemyInfo.enemies) {
+                            if (otherEnemy !== enemy && newPosition.distanceTo(otherEnemy.position) < enemyCollisionRadius * 2) {
+                                collision = true;
+                                break;
+                            }
+                        }
+
+                        if (collision) {
+                            const avoidanceDirection = getAvoidanceDirection(enemy, gameInfo.wallBoxes, enemyCollisionRadius, obstacleAvoidanceDistance);
+                            if (avoidanceDirection) {
+                                const avoidanceMoveStep = avoidanceDirection.multiplyScalar(chaseSpeed * delta);
+                                const avoidanceNewPosition = enemy.position.clone().add(avoidanceMoveStep);
+                                let avoidanceCollision = false;
+                                const avoidanceSphere = new THREE.Sphere(avoidanceNewPosition, enemyCollisionRadius);
+                                for (const wallBox of gameInfo.wallBoxes) {
+                                    if (wallBox.intersectsSphere(avoidanceSphere)) {
+                                        avoidanceCollision = true;
+                                        break;
+                                    }
+                                }
+                                for (const otherEnemy of enemyInfo.enemies) {
+                                    if (otherEnemy !== enemy && avoidanceNewPosition.distanceTo(otherEnemy.position) < enemyCollisionRadius * 2) {
+                                        avoidanceCollision = true;
+                                        break;
+                                    }
+                                }
+                                if (!avoidanceCollision) {
+                                    enemy.position.copy(avoidanceNewPosition);
+                                } else {
+                                    enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
+                                }
+                            } else {
+                                enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
+                            }
+                        } else {
+                            enemy.position.copy(newPosition);
+                        }
+                        if (enemy.currentAction !== enemy.runAction) {
+                            if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                            enemy.runAction.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.runAction;
+                        }
+                    } else {
+                        enemy.isChasing = false;
+                        if (!enemy.targetPosition || distanceToTarget < 1) {
+                            enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
+                        }
+                        const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
+                        const targetAngleEnemy = Math.atan2(direction.x, direction.z);
+                        const deltaAngleEnemy = getShortestAngleDifference(enemy.rotation.y, targetAngleEnemy);
+                        enemy.rotation.y += deltaAngleEnemy * rotationSpeed * delta;
+
+                        const moveStep = direction.multiplyScalar(patrolSpeed * delta);
+                        const newPosition = enemy.position.clone().add(moveStep);
+                        let collision = false;
+                        const enemySphere = new THREE.Sphere(newPosition, enemyCollisionRadius);
+                        for (const wallBox of gameInfo.wallBoxes) {
+                            if (wallBox.intersectsSphere(enemySphere)) {
+                                collision = true;
+                                break;
+                            }
+                        }
+                        for (const otherEnemy of enemyInfo.enemies) {
+                            if (otherEnemy !== enemy && newPosition.distanceTo(otherEnemy.position) < enemyCollisionRadius * 2) {
+                                collision = true;
+                                break;
+                            }
+                        }
+
+                        if (collision) {
+                            const avoidanceDirection = getAvoidanceDirection(enemy, gameInfo.wallBoxes, enemyCollisionRadius, obstacleAvoidanceDistance);
+                            if (avoidanceDirection) {
+                                const avoidanceMoveStep = avoidanceDirection.multiplyScalar(patrolSpeed * delta);
+                                const avoidanceNewPosition = enemy.position.clone().add(avoidanceMoveStep);
+                                let avoidanceCollision = false;
+                                const avoidanceSphere = new THREE.Sphere(avoidanceNewPosition, enemyCollisionRadius);
+                                for (const wallBox of gameInfo.wallBoxes) {
+                                    if (wallBox.intersectsSphere(avoidanceSphere)) {
+                                        avoidanceCollision = true;
+                                        break;
+                                    }
+                                }
+                                for (const otherEnemy of enemyInfo.enemies) {
+                                    if (otherEnemy !== enemy && avoidanceNewPosition.distanceTo(otherEnemy.position) < enemyCollisionRadius * 2) {
+                                        avoidanceCollision = true;
+                                        break;
+                                    }
+                                }
+                                if (!avoidanceCollision) {
+                                    enemy.position.copy(avoidanceNewPosition);
+                                } else {
+                                    enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
+                                }
+                            } else {
+                                enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
+                            }
+                        } else {
+                            enemy.position.copy(newPosition);
+                        }
+
+                        const isMoving = distanceToTarget > 0.5;
+                        if (isMoving && enemy.currentAction !== enemy.runAction) {
+                            if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                            enemy.runAction.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.runAction;
+                        } else if (!isMoving && enemy.currentAction !== enemy.idleAction) {
+                            if (enemy.currentAction) enemy.currentAction.fadeOut(0.2);
+                            enemy.idleAction.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.idleAction;
+                        }
+                    }
+                }
+
+                if (enemy.healthBar && enemy.healthBarBackground) {
+                    const healthPercentage = enemy.health / enemy.maxHealth;
+                    enemy.healthCtx.clearRect(0, 0, enemy.healthCanvas.width, enemy.healthCanvas.height);
+                    enemy.healthCtx.fillStyle = healthPercentage > 0.3 ? '#00ff00' : '#ff0000';
+                    enemy.healthCtx.fillRect(0, 0, enemy.healthCanvas.width * healthPercentage, enemy.healthCanvas.height);
+                    enemy.healthBar.material.map.needsUpdate = true;
+                }
+            });
+        }
+
+        function alertNearbyEnemies(wallBoxes, alertingEnemy, enemies, playerSoldier, alertRange) {
+            enemies.forEach(enemy => {
+                if (enemy === alertingEnemy || enemy.isChasing) return;
+                const distance = alertingEnemy.position.distanceTo(enemy.position);
+                if (distance <= alertRange) {
+                    if (canSeePlayer(enemy, playerSoldier, wallBoxes, Math.PI * 2 / 3)) {
+                        enemy.targetPosition = playerSoldier.position.clone();
+                        enemy.isChasing = true;
+                    } else {
+                        enemy.targetPosition = alertingEnemy.position.clone();
+                    }
+                }
+            });
+        }
+
+        function getAvoidanceDirection(enemy, wallBoxes, enemyCollisionRadius, obstacleAvoidanceDistance) {
+            const leftDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.quaternion).applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2).normalize();
+            const rightDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.quaternion).applyAxisAngle(new THREE.Vector3(0,1,0), -Math.PI/2).normalize();
+            const forwardDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.quaternion).normalize();
+
+            const testPositions = [
+                enemy.position.clone().add(leftDirection.multiplyScalar(obstacleAvoidanceDistance)),
+                enemy.position.clone().add(rightDirection.multiplyScalar(obstacleAvoidanceDistance)),
+                enemy.position.clone().add(leftDirection.multiplyScalar(obstacleAvoidanceDistance / 2)),
+                enemy.position.clone().add(rightDirection.multiplyScalar(obstacleAvoidanceDistance / 2)),
+                enemy.position.clone().add(forwardDirection.multiplyScalar(obstacleAvoidanceDistance / 2)),
+            ];
+
+            const testSpheres = testPositions.map(pos => new THREE.Sphere(pos, enemyCollisionRadius));
+            const safeDirections = [];
+            for (let i = 0; i < testSpheres.length; i++) {
+                let collision = false;
+                for (const wallBox of wallBoxes) {
+                    if (wallBox.intersectsSphere(testSpheres[i])) {
+                        collision = true;
+                        break;
+                    }
+                }
+                if (!collision) {
+                    safeDirections.push(testPositions[i].clone().sub(enemy.position).normalize());
+                }
+            }
+            return safeDirections.length > 0 ? safeDirections[0] : null;
+        }
+
+        function canSeePlayer(enemy, playerSoldier, wallBoxes, fieldOfView) {
+            if (!playerSoldier) return false;
+            const enemyToPlayer = new THREE.Vector3().subVectors(playerSoldier.position, enemy.position);
+            const distance = enemyToPlayer.length();
+            enemyToPlayer.normalize();
+
+            const enemyForward = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.quaternion);
+            enemyForward.y = 0;
+            enemyForward.normalize();
+
+            const enemyToPlayerHorizontal = enemyToPlayer.clone();
+            enemyToPlayerHorizontal.y = 0;
+            enemyToPlayerHorizontal.normalize();
+            const angle = enemyForward.angleTo(enemyToPlayerHorizontal);
+            if (angle > fieldOfView) return false;
+
+            const raycaster = new THREE.Raycaster();
+            const rayOrigin = enemy.position.clone().add(new THREE.Vector3(0, 1, 0));
+            raycaster.set(rayOrigin, enemyToPlayer);
+            raycaster.far = distance;
+
+            let blockingBox = null;
+            for (const wallBox of wallBoxes) {
+                const intersection = raycaster.ray.intersectsBox(wallBox);
+                if (intersection) {
+                    const boxCenter = wallBox.getCenter(new THREE.Vector3());
+                    const distanceToBox = rayOrigin.distanceTo(boxCenter);
+                    if (distanceToBox < distance) {
+                        blockingBox = wallBox;
+                        break;
+                    }
+                }
+            }
+            return !blockingBox;
+        }
+
+        function getRandomTarget(maze, gridSize, cellSize) {
+            let targetX, targetZ;
+            do {
+                targetX = Math.floor(Math.random() * gridSize);
+                targetZ = Math.floor(Math.random() * gridSize);
+            } while (maze[targetX][targetZ] === 1);
+            return new THREE.Vector3(targetX * cellSize + cellSize / 2, 0, targetZ * cellSize + cellSize / 2);
+        }
+
+        function animate(gm) {
+            if (gm.newGame) {
+                initNewLevel(gm);
+                return;
+            }
+
+            const delta = gm.sceneInfo.clock.getDelta();
+            const time = gm.sceneInfo.clock.getElapsedTime();
+
+            if (time - gm.gameInfo.getLastSpawnTime() > 10) {
+                spawnEnemy(gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
+                gm.gameInfo.setLastSpawnTime(time);
+            }
+
+            updatePlayer(gm.playerInfo, gm.inputInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, delta);
+            updateEnemies(gm.enemyInfo, gm.playerInfo, gm.gameInfo, delta, gm.inputInfo);
+
+            if (gm.cameraMode === 'perspective' && gm.sceneInfo.controls) {
+                gm.sceneInfo.controls.update();
+            }
+
+            gm.sceneInfo.renderer.render(gm.sceneInfo.scene, gm.sceneInfo.camera);
+            requestAnimationFrame(() => animate(gm));
+        }
+
+        function setupEventListeners(sceneInfo, playerInfo) {
+            const keys = { 
+                w: false, a: false, s: false, d: false, 
+                space: false, shift: false,
+                '1': false, '2': false, '3': false,
+                mouseLeft: false,
+                mouseMovementX: 0,
+                mouseMovementY: 0,
+                joystick: { x: 0, y: 0 }
+            };
+
+            const cameraButtons = document.querySelectorAll('#camera-buttons button');
+            cameraButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const cameraMode = button.dataset.camera;
+                    switchCamera(cameraMode, sceneInfo);
+                });
+            });
+
+            const mouse = new THREE.Vector2();
+
+            const keyDownHandler = (e) => {
+                const key = e.key.toLowerCase();
+                if (key === ' ') keys.space = true;
+                else if (key === 'shift') keys.shift = true;
+                else if (keys.hasOwnProperty(key)) keys[key] = true;
+
+                if (key === '1') switchCamera('perspective', sceneInfo);
+                else if (key === '2') switchCamera('firstPerson', sceneInfo);
+                else if (key === '3') switchCamera('topDown', sceneInfo);
+            };
+
+            const keyUpHandler = (e) => {
+                const key = e.key.toLowerCase();
+                if (key === ' ') keys.space = false;
+                else if (key === 'shift') {
+                    keys.shift = false;
+                    const player = playerInfo.getPlayer();
+                    if (player) player.shiftToggle = !player.shiftToggle;
+                }
+                else if (keys.hasOwnProperty(key)) keys[key] = false;
+            };
+
+            const mouseMoveHandler = (e) => {
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                keys.mouseMovementX = e.movementX || e.mozMovementX || e.webkitMovementX || 0;
+                keys.mouseMovementY = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
+            };
+
+            const mouseDownHandler = (e) => {
+                if (e.button === 0) {
+                    keys.mouseLeft = true;
+                    const player = playerInfo.getPlayer();
+                    if (player && gameMaster.cameraMode === 'topDown') {
+                        player.attackTriggeredByMouse = true;
+                        console.log("Mouse Left Click - Attack Triggered (TopDown Mode)");
+                    }
+                }
+            };
+
+            const mouseUpHandler = (e) => {
+                if (e.button === 0) {
+                    keys.mouseLeft = false;
+                    console.log("Mouse Left Up");
+                }
+            };
+
+            const resizeHandler = () => {
+                sceneInfo.camera.aspect = window.innerWidth / window.innerHeight;
+                sceneInfo.camera.updateProjectionMatrix();
+                sceneInfo.renderer.setSize(window.innerWidth, window.innerHeight);
+            };
+
+            window.addEventListener('keydown', keyDownHandler);
+            window.addEventListener('keyup', keyUpHandler);
+            window.addEventListener('mousemove', mouseMoveHandler);
+            window.addEventListener('mousedown', mouseDownHandler);
+            window.addEventListener('mouseup', mouseUpHandler);
+            window.addEventListener('resize', resizeHandler);
+
+            const joystickContainer = document.getElementById('joystick-container');
+            const joystick = document.getElementById('joystick');
+            const attackButton = document.getElementById('attack-button');
+
+            let joystickActive = false;
+            let joystickPointerId = null;
+
+            function handleJoystickStart(event) {
+                event.preventDefault();
+                const touch = event.changedTouches[0];
+                joystickActive = true;
+                joystickPointerId = touch.identifier;
+                updateJoystick(touch);
+            }
+
+            function handleJoystickMove(event) {
+                event.preventDefault();
+                if (!joystickActive) return;
+
+                for (let i = 0; i < event.changedTouches.length; i++) {
+                    const touch = event.changedTouches[i];
+                    if (touch.identifier === joystickPointerId) {
+                        updateJoystick(touch);
+                        break;
+                    }
+                }
+            }
+
+            function handleJoystickEnd(event) {
+                event.preventDefault();
+                for (let i = 0; i < event.changedTouches.length; i++) {
+                    const touch = event.changedTouches[i];
+                    if (touch.identifier === joystickPointerId) {
+                        joystickActive = false;
+                        joystickPointerId = null;
+                        resetJoystick();
+                        break;
+                    }
+                }
+            }
+
+            function updateJoystick(touch) {
+                const containerRect = joystickContainer.getBoundingClientRect();
+                const x = touch.clientX - containerRect.left;
+                const y = touch.clientY - containerRect.top;
+                const centerX = containerRect.width / 2;
+                const centerY = containerRect.height / 2;
+                const deltaX = x - centerX;
+                const deltaY = y - centerY;
+
+                const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+                const maxDistance = containerRect.width / 2;
+
+                let joystickX = deltaX / maxDistance;
+                let joystickY = deltaY / maxDistance;
+
+                joystickX = Math.max(-1, Math.min(1, joystickX));
+                joystickY = Math.max(-1, Math.min(1, joystickY));
+
+                keys.joystick.x = joystickX;
+                keys.joystick.y = joystickY;
+
+                const joystickXPos = centerX + joystickX * maxDistance;
+                const joystickYPos = centerY + joystickY * maxDistance;
+                joystick.style.left = `${joystickXPos}px`;
+                joystick.style.top = `${joystickYPos}px`;
+            }
+
+            function resetJoystick() {
+                joystick.style.left = '50%';
+                joystick.style.top = '50%';
+                keys.joystick.x = 0;
+                keys.joystick.y = 0;
+            }
+
+            attackButton.addEventListener('touchstart', (event) => {
+                event.preventDefault();
+                keys.space = true;
+            });
+
+            attackButton.addEventListener('touchend', (event) => {
+                event.preventDefault();
+                keys.space = false;
+            });
+
+            joystickContainer.addEventListener('touchstart', handleJoystickStart);
+            joystickContainer.addEventListener('touchmove', handleJoystickMove);
+            joystickContainer.addEventListener('touchend', handleJoystickEnd);
+            joystickContainer.addEventListener('touchcancel', handleJoystickEnd);
+
+            return { 
+                keys, 
+                mouse,
+                removeListeners: () => {
+                    window.removeEventListener('keydown', keyDownHandler);
+                    window.removeEventListener('keyup', keyUpHandler);
+                    window.removeEventListener('mousemove', mouseMoveHandler);
+                    window.removeEventListener('mousedown', mouseDownHandler);
+                    window.removeEventListener('mouseup', mouseUpHandler);
+                    window.removeEventListener('resize', resizeHandler);
+
+                    joystickContainer.removeEventListener('touchstart', handleJoystickStart);
+                    joystickContainer.removeEventListener('touchmove', handleJoystickMove);
+                    joystickContainer.removeEventListener('touchend', handleJoystickEnd);
+                    joystickContainer.removeEventListener('touchcancel', handleJoystickEnd);
+                }
+            };
+        }
+
+        function switchCamera(cameraMode, sceneInfo) {
+            gameMaster.cameraMode = cameraMode;
+            if (cameraMode === 'perspective') {
+                if (!sceneInfo.controls) {
+                    sceneInfo.controls = new THREE.OrbitControls(sceneInfo.camera, sceneInfo.renderer.domElement);
+                    sceneInfo.controls.target.set(30, 0, 30);
+                    sceneInfo.camera.position.set(30, 10, 40);
+                    sceneInfo.camera.lookAt(new THREE.Vector3(30, 0, 30));
+                    sceneInfo.controls.update();
+                }
+            } else if (cameraMode === 'firstPerson') {
+                sceneInfo.camera.rotation.x = 0;
+                sceneInfo.camera.rotation.z = 0;
+                if (sceneInfo.controls) {
+                    sceneInfo.controls.dispose();
+                    sceneInfo.controls = null;
+                }
+            } else if (cameraMode === 'topDown') {
+                if (sceneInfo.controls) {
+                    sceneInfo.controls.dispose();
+                    sceneInfo.controls = null;
+                }
+            }
+            console.log(`Switched to ${cameraMode} Camera`);
+        }
+
+        function initNewLevel(gm) {
+            const oldPlayer = gm.playerInfo ? gm.playerInfo.getPlayer() : null;
+            const savedState = {
+                health: oldPlayer ? oldPlayer.health : 100,
+                hasKey: oldPlayer ? oldPlayer.hasKey : false,
+                shiftToggle: oldPlayer ? oldPlayer.shiftToggle : false,
+                hasBow: oldPlayer ? oldPlayer.hasBow : false,
+                arrowCount: oldPlayer ? oldPlayer.arrowCount : 0
+            };
+
+            if (gm.inputInfo && gm.inputInfo.removeListeners) {
+                gm.inputInfo.removeListeners();
+            }
+            if (gm.sceneInfo && gm.sceneInfo.renderer && gm.sceneInfo.renderer.domElement) {
+                document.body.removeChild(gm.sceneInfo.renderer.domElement);
+            }
+
+            gm.sceneInfo = setupScene();
+            gm.gameInfo = {
+                gridSize: 21,
+                cellSize: 4,
+                maze: null,
+                wallBoxes: [],
+                obstacles: [],
+                treasures: [],
+                obstacleMeshes: [],
+                treasureMeshes: new Map(),
+                key: null,
+                door: null,
+                lastSpawnTime: -9999,
+                getLastSpawnTime: function() { return this.lastSpawnTime; },
+                setLastSpawnTime: function(time) { this.lastSpawnTime = time; }
+            };
+
+            const { maze, obstacles, treasures } = generateMaze(gm.gameInfo.gridSize, gm.gameInfo.cellSize);
+            gm.gameInfo.maze = maze;
+            gm.gameInfo.obstacles = obstacles;
+            gm.gameInfo.treasures = treasures;
+
+            createFloor(gm.sceneInfo, gm.gameInfo);
+            gm.gameInfo.wallBoxes = createWalls(gm.sceneInfo, gm.gameInfo);
+            const { obstacleMeshes, key, door } = createObstacles(gm.sceneInfo, gm.gameInfo);
+            gm.gameInfo.obstacleMeshes = obstacleMeshes;
+            gm.gameInfo.key = key;
+            gm.gameInfo.door = door;
+            createTreasures(gm.sceneInfo, gm.gameInfo);
+
+            gm.enemyInfo = { enemies: [] };
+            gm.playerInfo = { getPlayer: createPlayer(gm.sceneInfo) };
+            gm.inputInfo = setupEventListeners(gm.sceneInfo, gm.playerInfo);
+            gm.newGame = false;
+
+            const newPlayer = gm.playerInfo.getPlayer();
+            if (newPlayer) {
+                newPlayer.health = savedState.health;
+                newPlayer.hasKey = savedState.hasKey;
+                newPlayer.shiftToggle = savedState.shiftToggle;
+                newPlayer.hasBow = savedState.hasBow;
+                newPlayer.arrowCount = savedState.arrowCount;
+            }
+
+            animate(gm);
+        }
+
+        let gameMaster = { 
+            gameInfo: null, 
+            sceneInfo: null, 
+            playerInfo: null, 
+            enemyInfo: null, 
+            inputInfo: null, 
+            newGame: true,
+            cameraMode: 'topDown'
+        };
+
+        initNewLevel(gameMaster);
+    </script>
+</body>
+</html>
