@@ -249,7 +249,8 @@
         }
 
         function createWalls(sceneInfo, gameInfo) {
-            const wallTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/wall.png');
+            //const wallTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/wall.png');
+            const wallTexture = textureLoader.load('./textures/wall.png');
             wallTexture.wrapS = THREE.RepeatWrapping;
             wallTexture.wrapT = THREE.RepeatWrapping;
             wallTexture.repeat.set(1, 1); // 可根據牆壁大小調整重複次數
@@ -275,7 +276,8 @@
         
         function createObstacles(sceneInfo, gameInfo) {
             const textureLoader = new THREE.TextureLoader();
-            const obstacleTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/obstacle.png');
+            //const obstacleTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/obstacle.png');
+            const obstacleTexture = textureLoader.load('./textures/obstacle.png');
             obstacleTexture.wrapS = THREE.RepeatWrapping;
             obstacleTexture.wrapT = THREE.RepeatWrapping;
             obstacleTexture.repeat.set(1, 1); // 可根據障礙物大小調整重複次數
@@ -332,23 +334,40 @@
 
         function createTreasures(sceneInfo, gameInfo) {
             const textureLoader = new THREE.TextureLoader();
-            const treasureTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/treasure.png');
-            treasureTexture.wrapS = THREE.RepeatWrapping;
-            treasureTexture.wrapT = THREE.RepeatWrapping;
-            treasureTexture.repeat.set(1, 1); // 可根據球形大小調整
+            const treasureTextures = {
+                //health: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_health.jpg'),
+                //attack: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_attack.jpg'),
+                //speed: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_speed.jpg'),
+                //bow: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_bow.jpg')
+                health: textureLoader.load('./textures/treasure_health.png'),
+                attack: textureLoader.load('./textures/treasure_attack.png'),
+                speed: textureLoader.load('./textures/treasure_speed.png'),
+                bow: textureLoader.load('./textures/treasure_bow.png')
+            };
 
-            const geometry = new THREE.SphereGeometry(gameInfo.cellSize / 4, 32, 32);
-            const material = new THREE.MeshStandardMaterial({ map: treasureTexture });
+    // 設置貼圖屬性
+    for (let type in treasureTextures) {
+        treasureTextures[type].wrapS = THREE.RepeatWrapping;
+        treasureTextures[type].wrapT = THREE.RepeatWrapping;
+        treasureTextures[type].repeat.set(1, 1); // 控制貼圖在球面上的重複
+    }
 
-            gameInfo.treasures.forEach(treasure => {
-                const treasureMesh = new THREE.Mesh(geometry, material);
-                treasureMesh.position.set(treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 4, treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2);
-                treasureMesh.castShadow = true;
-                treasureMesh.receiveShadow = true;
-                sceneInfo.scene.add(treasureMesh);
-                gameInfo.treasureMeshes.set(treasure, treasureMesh);
-            });
-        }
+    const geometry = new THREE.SphereGeometry(gameInfo.cellSize / 4, 32, 32); // 改回球形
+
+    gameInfo.treasures.forEach(treasure => {
+        const material = new THREE.MeshStandardMaterial({ map: treasureTextures[treasure.type] });
+        const treasureMesh = new THREE.Mesh(geometry, material);
+        treasureMesh.position.set(
+            treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2,
+            gameInfo.cellSize / 4,
+            treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2
+        );
+        treasureMesh.castShadow = true;
+        treasureMesh.receiveShadow = true;
+        sceneInfo.scene.add(treasureMesh);
+        gameInfo.treasureMeshes.set(treasure, treasureMesh);
+    });
+}
 
         function createPlayer(sceneInfo) {
             let player = null;
