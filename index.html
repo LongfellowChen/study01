@@ -235,7 +235,8 @@
             floorTexture.wrapS = THREE.RepeatWrapping;
             floorTexture.wrapT = THREE.RepeatWrapping;
             const mapSize = gameInfo.gridSize;
-            floorTexture.repeat.set(mapSize / 4, mapSize / 4);
+            //floorTexture.repeat.set(mapSize / 4, mapSize / 4);
+            floorTexture.repeat.set(1, 1);
 
             const floorSize = mapSize * gameInfo.cellSize;
             const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
@@ -328,28 +329,18 @@
 
             return { obstacleMeshes, key, door };
         }
+
         function createTreasures(sceneInfo, gameInfo) {
+            const textureLoader = new THREE.TextureLoader();
+            const treasureTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/treasure.png');
+            treasureTexture.wrapS = THREE.RepeatWrapping;
+            treasureTexture.wrapT = THREE.RepeatWrapping;
+            treasureTexture.repeat.set(1, 1); // 可根據球形大小調整
+
             const geometry = new THREE.SphereGeometry(gameInfo.cellSize / 4, 32, 32);
+            const material = new THREE.MeshStandardMaterial({ map: treasureTexture });
 
             gameInfo.treasures.forEach(treasure => {
-                let color;
-                switch (treasure.type) {
-                    case 'health':
-                        color = 0xffff00;
-                        break;
-                    case 'attack':
-                        color = 0xff0000;
-                        break;
-                    case 'speed':
-                        color = 0x0000ff;
-                        break;
-                    case 'bow':
-                        color = 0x8B4513;
-                        break;
-                    default:
-                        color = 0xffff00;
-                }
-                const material = new THREE.MeshStandardMaterial({ color });
                 const treasureMesh = new THREE.Mesh(geometry, material);
                 treasureMesh.position.set(treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 4, treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2);
                 treasureMesh.castShadow = true;
