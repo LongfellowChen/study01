@@ -103,6 +103,8 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MDDLoader.js"></script>
     <script>
+        const textureLoader = new THREE.TextureLoader();
+
         function getShortestAngleDifference(currentAngle, targetAngle) {
             let delta = targetAngle - currentAngle;
             delta = ((delta + Math.PI) % (2 * Math.PI)) - Math.PI;
@@ -229,26 +231,7 @@
         }
 
         function createFloor(sceneInfo, gameInfo) {
-            const floorCanvas = document.createElement('canvas');
-            floorCanvas.width = 256;
-            floorCanvas.height = 256;
-            const floorCtx = floorCanvas.getContext('2d');
-            floorCtx.fillStyle = '#8B4513';
-            floorCtx.fillRect(0, 0, 256, 256);
-            floorCtx.strokeStyle = '#A0522D';
-            floorCtx.lineWidth = 2;
-            for (let i = 1; i < 16; i++) {
-                floorCtx.beginPath();
-                floorCtx.moveTo(i * 16, 0);
-                floorCtx.lineTo(i * 16, 256);
-                floorCtx.stroke();
-                floorCtx.beginPath();
-                floorCtx.moveTo(0, i * 16);
-                floorCtx.lineTo(256, i * 16);
-                floorCtx.stroke();
-            }
-
-            const floorTexture = new THREE.CanvasTexture(floorCanvas);
+            const floorTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/floor.png');
             floorTexture.wrapS = THREE.RepeatWrapping;
             floorTexture.wrapT = THREE.RepeatWrapping;
             const mapSize = gameInfo.gridSize;
@@ -265,20 +248,11 @@
         }
 
         function createWalls(sceneInfo, gameInfo) {
-            const wallCanvas = document.createElement('canvas');
-            wallCanvas.width = 256;
-            wallCanvas.height = 256;
-            const wallCtx = wallCanvas.getContext('2d');
-            wallCtx.fillStyle = '#808080';
-            wallCtx.fillRect(0, 0, 256, 256);
-            for (let k = 0; k < 10; k++) {
-                wallCtx.beginPath();
-                wallCtx.moveTo(Math.random() * 256, Math.random() * 256);
-                wallCtx.lineTo(Math.random() * 256, Math.random() * 256);
-                wallCtx.strokeStyle = '#A9A9A9';
-                wallCtx.stroke();
-            }
-            const wallTexture = new THREE.CanvasTexture(wallCanvas);
+            const wallTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/wall.png');
+            wallTexture.wrapS = THREE.RepeatWrapping;
+            wallTexture.wrapT = THREE.RepeatWrapping;
+            wallTexture.repeat.set(1, 1); // 可根據牆壁大小調整重複次數
+
             const wallGeometry = new THREE.BoxGeometry(gameInfo.cellSize, gameInfo.cellSize, gameInfo.cellSize);
             const wallMaterial = new THREE.MeshStandardMaterial({ map: wallTexture });
             const wallBoxes = [];
@@ -297,9 +271,16 @@
             }
             return wallBoxes;
         }
-
+        
         function createObstacles(sceneInfo, gameInfo) {
+            const textureLoader = new THREE.TextureLoader();
+            const obstacleTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/obstacle.png');
+            obstacleTexture.wrapS = THREE.RepeatWrapping;
+            obstacleTexture.wrapT = THREE.RepeatWrapping;
+            obstacleTexture.repeat.set(1, 1); // 可根據障礙物大小調整重複次數
+
             const obstacleGeometry = new THREE.BoxGeometry(gameInfo.cellSize / 2, gameInfo.cellSize / 2, gameInfo.cellSize / 2);
+            const obstacleMaterial = new THREE.MeshStandardMaterial({ map: obstacleTexture });
             const obstacleMeshes = [];
             const keyIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
             let doorIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
@@ -308,8 +289,6 @@
             let keyPosition, doorPosition;
 
             gameInfo.obstacles.forEach((obstacle, index) => {
-                const color = obstacle.durability === 1 ? 0x88FF88 : obstacle.durability === 2 ? 0x00CC00 : 0x005500;
-                const obstacleMaterial = new THREE.MeshStandardMaterial({ color });
                 const obstacleMesh = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
                 obstacleMesh.position.set(obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 4, obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2);
                 obstacleMesh.castShadow = true;
@@ -349,7 +328,6 @@
 
             return { obstacleMeshes, key, door };
         }
-
         function createTreasures(sceneInfo, gameInfo) {
             const geometry = new THREE.SphereGeometry(gameInfo.cellSize / 4, 32, 32);
 
