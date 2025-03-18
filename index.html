@@ -103,7 +103,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MDDLoader.js"></script>
     <script>
-        const ext_resource_url = 'https://raw.githubusercontent.com/LongfellowChen/study01/master/';
+        const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/';
         ///const ext_resource_url = './';
         const textureLoader = new THREE.TextureLoader();
 
@@ -368,7 +368,7 @@
         function createPlayer(sceneInfo) {
             let player = null;
             const gltfLoader = new THREE.GLTFLoader();
-            gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
+            gltfLoader.load(ext_resource_url+'3d_module/RobotExpressive.glb', (gltf) => {
                 const soldier = gltf.scene;
                 soldier.scale.set(0.5, 0.5, 0.5);
                 soldier.position.set(6, 0, 6);

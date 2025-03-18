@@ -5,7 +5,7 @@
 <div id="container_1" style="position: absolute; top: 0px; left: 0px;"></div>
 
 <script>
-const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01/master/';
+const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/';
 ///const ext_resource_url = './';
 </script>
 
@@ -359,7 +359,7 @@ spotLight.angle = Math.PI / 6;
 spotLight.penumbra = 1;
 spotLight.decay = 2;
 spotLight.distance = 0;
-spotLight.map = new THREE.TextureLoader().load("colors_2.png");
+spotLight.map = new THREE.TextureLoader().load(ext_resource_url+"image/colors_2.png");
 spotLight.castShadow = true;
 spotLight.layers.enable(LAYER_VOLUMETRIC_LIGHTING);
 scene.add(spotLight);
@@ -436,7 +436,7 @@ let penguinRotation = 0; // Penguin's rotation angle (radians)
 
 // Load the penguin model
 const gltfLoader = new GLTFLoader();
-gltfLoader.load("penguin.glb?1", function (gltf) {
+gltfLoader.load(ext_resource_url+"3d_module/penguin.glb?1", function (gltf) {
         penguin = gltf.scene;
 
     penguin.traverse(function (object) {
