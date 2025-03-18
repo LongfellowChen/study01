@@ -103,6 +103,8 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MDDLoader.js"></script>
     <script>
+        const ext_resource_url = 'https://raw.githubusercontent.com/LongfellowChen/study01/master/';
+        ///const ext_resource_url = './';
         const textureLoader = new THREE.TextureLoader();
 
         function getShortestAngleDifference(currentAngle, targetAngle) {
@@ -231,7 +233,7 @@
         }
 
         function createFloor(sceneInfo, gameInfo) {
-            const floorTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/floor.png');
+            const floorTexture = textureLoader.load( ext_resource_url + 'textures/floor.png');
             floorTexture.wrapS = THREE.RepeatWrapping;
             floorTexture.wrapT = THREE.RepeatWrapping;
             const mapSize = gameInfo.gridSize;
@@ -249,8 +251,7 @@
         }
 
         function createWalls(sceneInfo, gameInfo) {
-            //const wallTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/wall.png');
-            const wallTexture = textureLoader.load('./textures/wall.png');
+            const wallTexture = textureLoader.load(ext_resource_url + 'textures/wall.png');
             wallTexture.wrapS = THREE.RepeatWrapping;
             wallTexture.wrapT = THREE.RepeatWrapping;
             wallTexture.repeat.set(1, 1); // 可根據牆壁大小調整重複次數
@@ -276,8 +277,7 @@
         
         function createObstacles(sceneInfo, gameInfo) {
             const textureLoader = new THREE.TextureLoader();
-            //const obstacleTexture = textureLoader.load('https://raw.githubusercontent.com/LongfellowChen/study01/master/textures/obstacle.png');
-            const obstacleTexture = textureLoader.load('./textures/obstacle.png');
+            const obstacleTexture = textureLoader.load(ext_resource_url + 'textures/obstacle.png');
             obstacleTexture.wrapS = THREE.RepeatWrapping;
             obstacleTexture.wrapT = THREE.RepeatWrapping;
             obstacleTexture.repeat.set(1, 1); // 可根據障礙物大小調整重複次數
@@ -335,14 +335,10 @@
         function createTreasures(sceneInfo, gameInfo) {
             const textureLoader = new THREE.TextureLoader();
             const treasureTextures = {
-                //health: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_health.jpg'),
-                //attack: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_attack.jpg'),
-                //speed: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_speed.jpg'),
-                //bow: textureLoader.load('https://raw.githubusercontent.com/your-username/my-threejs-project/main/textures/treasure_bow.jpg')
-                health: textureLoader.load('./textures/treasure_health.png'),
-                attack: textureLoader.load('./textures/treasure_attack.png'),
-                speed: textureLoader.load('./textures/treasure_speed.png'),
-                bow: textureLoader.load('./textures/treasure_bow.png')
+                health: textureLoader.load(ext_resource_url + 'textures/treasure_health.png'),
+                attack: textureLoader.load(ext_resource_url + 'textures/treasure_attack.png'),
+                speed: textureLoader.load(ext_resource_url + 'textures/treasure_speed.png'),
+                bow: textureLoader.load(ext_resource_url + 'textures/treasure_bow.png')
             };
 
     // 設置貼圖屬性

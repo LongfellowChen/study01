@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<div id="container_1" style="position: absolute; top: 0px; left: 0px;"></div>
+
+<script type="importmap">{ "imports" : {
+    "three" : "./node_modules/three/build/three.webgpu.min.js",
+    "three/webgpu" : "./node_modules/three/build/three.webgpu.min.js",
+    "three/tsl" : "./node_modules/three/build/three.tsl.min.js",
+    "three/addons/" : "./node_modules/three/examples/jsm/"
+}}</script>
+
+<script type="module">
+
+import * as THREE from "three";
+import {
+    Fn, If, uniform, time, texture, uv, instanceIndex,
+    pass, screenUV, screenCoordinate,
+    float, vec2, vec3, vec4,
+    fract, floor, abs, negate, clamp, max, mix, dot, step, smoothstep,
+    length, sin, cos,
+    positionWorld, positionLocal, positionGeometry, cameraPosition
+} from "three/tsl";
+
+import Stats from "three/addons/libs/stats.module.js";
+import { GUI } from "three/addons/libs/lil-gui.module.min.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+import { bayer16 } from "three/addons/tsl/math/Bayer.js";
+import { gaussianBlur } from "three/addons/tsl/display/GaussianBlurNode.js";
+
+// Constants and Configuration
+const LAYER_VOLUMETRIC_LIGHTING = 10;
+const MAX_BRICK_COUNT = 100;
+const PENZ_POSITION = -5; // Z position for penguin
+const BEAM_SPAN_LENGTH = 2; // Length of one span of the dotted beam
+const INITIAL_TONE_MAPPING_EXPOSURE = 2;
+const GROUND_SIZE = 100;
+
+// Movement and Rotation Speeds
+const MOVE_SPEED = 0.5;
+const ROTATION_SPEED = 0.1;
+
+// Device Pixel Ratio (adjust for different devices)
+const DEVICE_PIXEL_RATIO = 1; //window.devicePixelRatio;
+
+// Initialize Three.js components
+const container = document.getElementById("container_1");
+const renderer = new THREE.WebGPURenderer(/*{ antialias: true }*/);
+renderer.setPixelRatio(DEVICE_PIXEL_RATIO);
+renderer.setAnimationLoop(tick);
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = INITIAL_TONE_MAPPING_EXPOSURE;
+renderer.shadowMap.enabled = true;
+const canvas = renderer.domElement;
+container.appendChild(canvas);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0);
+
+const camera = new THREE.PerspectiveCamera(60, 1 / 1, 0.1, 100);
+camera.position.set(-8, 5, 9);
+
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+scene.add(hemiLight);
+
+// Stats for performance monitoring
+const stats = new Stats();
+container.appendChild(stats.dom);
+
+// Orbit Controls for camera manipulation
+const orbitControls = new OrbitControls(camera, canvas);
+orbitControls.target.set(0, 2, -4);
+orbitControls.maxDistance = 40;
+orbitControls.minDistance = 2;
+
+// Keyboard input tracking
+const keyboard = {
+    forward: false,
+    left: false,
+    backward: false,
+    right: false
+};
+
+// Event listeners for keyboard input
+window.addEventListener('keydown', (event) => {
+    switch (event.key.toLowerCase()) {
+        case 'w': keyboard.forward = true; break;
+        case 'a': keyboard.left = true; break;
+        case 's': keyboard.backward = true; break;
+        case 'd': keyboard.right = true; break;
+    }
+});
+
+window.addEventListener('keyup', (event) => {
+    switch (event.key.toLowerCase()) {
+        case 'w': keyboard.forward = false; break;
+        case 'a': keyboard.left = false; break;
+        case 's': keyboard.backward = false; break;
+        case 'd': keyboard.right = false; break;
+    }
+});
+
+// Hashing function
+function mm_hash12(iw) {
+    const w = iw.mul(0.000303).add(fract(iw.mul(0.707)));
+    const a = w.x.add(w.y.mul(0.3));
+
+    a.assign(fract(a));
+    a.assign(a.sub(a.mul(a)));
+
+    return fract(a.mul(937652.481));
+}
+
+// Random direction vector function
+function rnd_dir(ip) {
+    return fract(vec3(1, 99, 9999).mul(mm_hash12(ip.xy.add(ip.zz.mul(100))))).sub(0.5);
+}
+
+// Simplex noise function
+function simplex3d(p) {
+    const ip = floor(p.add(dot(vec3(0.333333), p)));
+    const p0 = p.sub(ip).add(dot(vec3(0.166666), ip));
+
+    const f = step(p0.yzx, p0);
+    const ff = f.mul(f.zxy);
+    const v1 = f.sub(ff);
+    const v2 = ff.sub(f.zxy).add(1);
+
+    const p1 = p0.sub(v1).add(0.166666);
+    const p2 = p0.sub(v2).add(0.333333);
+    const p3 = p0.sub(1).add(0.5);
+
+    const d = max(negate(vec4(
+        dot(p0, p0),
+        dot(p1, p1),
+        dot(p2, p2),
+        dot(p3, p3)
+    )).add(0.58), 0);
+    d.assign(d.mul(d));
+    d.assign(d.mul(d));
+
+    return dot(vec4(
+        dot(p0, rnd_dir(ip)),
+        dot(p1, rnd_dir(ip.add(v1))),
+        dot(p2, rnd_dir(ip.add(v2))),
+        dot(p3, rnd_dir(ip.add(1)))
+    ), d).mul(40).add(0.5);
+}
+
+// Smoke effect function
+function smoke(p) {
+    const a = simplex3d(p.add(vec3(1, -0.7, 0).mul(time).mul(2)).mul(0.07));
+    const b = simplex3d(p.add(vec3(1, -0.7, 0).mul(time).mul(3)).mul(0.3));
+    const c = simplex3d(p.add(vec3(1, -0.7, 0).mul(time).mul(4)).mul(0.9));
+    return vec3(1, 1, 1).mul(
+        a.mul(a.add(0.2)).mul(1)
+            .add(b.mul(b).mul(0.5))
+            .add(c.mul(c).mul(0.5))
+    ).min(1);
+}
+
+// Volume Node Material for smoke effect
+const smokeAmount = uniform(2);
+const volumeNodeMaterial = new THREE.VolumeNodeMaterial();
+volumeNodeMaterial.steps = 2;
+volumeNodeMaterial.offsetNode = bayer16(screenCoordinate); // Add dithering to reduce banding
+
+volumeNodeMaterial.scatteringNode = Fn(({ positionRay }) => {
+    return mix(vec3(1), smoke(positionRay).add(0.5), smokeAmount);
+});
+
+const smokeBox = new THREE.Mesh(new THREE.BoxGeometry(GROUND_SIZE, 10, GROUND_SIZE), volumeNodeMaterial);
+smokeBox.receiveShadow = true;
+smokeBox.position.y = 5;
+smokeBox.layers.disableAll();
+smokeBox.layers.enable(LAYER_VOLUMETRIC_LIGHTING);
+scene.add(smokeBox);
+
+// Beam effect function
+const shotHalf = uniform(0);
+function beam(color, phase) {
+    const a = float().toVar();
+    const b = float().toVar();
+    const h = float().toVar();
+
+    a.assign(smoke(positionWorld).add(0.5));
+
+    b.assign(positionGeometry.z);
+
+    h.assign(time.mul(7)); //★ 1 秒間に何スパン進むか。
+    h.addAssign(phase);
+    h.addAssign(b.div(BEAM_SPAN_LENGTH).sub(h).floor().add(0.5));
+    b.assign(b.clamp(
+        h.sub(shotHalf).mul(BEAM_SPAN_LENGTH),
+        h.add(shotHalf).mul(BEAM_SPAN_LENGTH)
+    ));
+    b.assign(length(positionGeometry.xz.sub(vec2(0, b))));
+
+    h.assign(float(0.05).div(b).sub(0.05 / 1.5));
+    h.addAssign(smoothstep(-1.5, 1.5, b.negate())
+        .mul(smoothstep(-1.5, 1.5, b.negate()))
+        .mul(0.2)
+    );
+    h.mulAssign(mix(1, a.mul(a), smokeAmount));
+
+    return vec4(
+        color.add(h.sub(1).max(1).sub(1)).clamp(0, 0.7),
+        h.clamp(0, 0.7)
+            .mul(smoothstep(0, 1, positionWorld.y)) //★ 地面近くで消す
+            .mul(smoothstep(0, 0.5, positionGeometry.z)) //★ 目の近くで消す
+    );
+}
+
+// Beam Meshes
+const beamRed = new THREE.Mesh(
+    new THREE.PlaneGeometry(3, 20).rotateX(-1.57080).translate(0, 0, 10),
+    new THREE.MeshBasicNodeMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+);
+beamRed.material.fragmentNode = Fn(() => beam(vec3(1, 0.05, 0.3), 0))();
+scene.add(beamRed);
+
+const beamBlue = beamRed.clone();
+beamBlue.material = beamRed.material.clone();
+beamBlue.material.fragmentNode = Fn(() => beam(vec3(1, 0.3, 0.05), 0.5))();
+scene.add(beamBlue);
+
+// Orthographic camera for GPGPU
+const orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
+
+const orthographicPlane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+
+const orthographicScene = new THREE.Scene();
+orthographicScene.add(orthographicPlane);
+
+// Render Targets for brick simulation
+const brickRenderTargets = new Array(2);
+let brickRenderTargetIndex = 0;
+
+const brickTextureSize = 2 ** Math.ceil(Math.log2(Math.sqrt(MAX_BRICK_COUNT))); // Size of the brick texture
+brickRenderTargets[0] = new THREE.RenderTarget(brickTextureSize, brickTextureSize, {
+    type: THREE.FloatType // Recent iPhones support FloatType
+});
+let textureOption = brickRenderTargets[0].texture;
+textureOption.magFilter = textureOption.minFilter = THREE.NearestFilter;
+textureOption.wrapS = THREE.RepeatWrapping; // For fract() omission
+
+brickRenderTargets[1] = brickRenderTargets[0].clone();
+
+// Brick simulation shaders
+const spawnIndex = uniform(0);
+const spawnPosition = uniform(vec4());
+
+
+// 添加 uniform 來控制爆炸
+const explosionPosition = uniform(new THREE.Vector3(0, 0, 0)); // 爆炸位置
+const explosionActive = uniform(0); // 是否觸發爆炸（0 = 無，1 = 有）
+const explosionTime = uniform(0); // 爆炸動畫時間
+// 修改磚塊生成邏輯以支持爆炸
+function brick_proc(n) {
+    const i = float().toVar();
+    const d = vec4().toVar();
+
+    i.assign(uv().x.add(uv().y.mul(brickRenderTargets[0].width)).mul(brickRenderTargets[0].width).floor());
+    
+    If(explosionActive.equal(1).and(i.greaterThanEqual(spawnIndex)).and(i.lessThan(spawnIndex.add(10))), () => {
+        // 在爆炸點生成臨時磚塊（最多10個）
+        const offset = i.sub(spawnIndex).mul(0.1); // 每個磚塊略有偏移
+        d.assign(vec4(
+            explosionPosition.x.add(sin(offset).mul(0.5)),
+            explosionPosition.y.add(cos(offset).mul(0.5)),
+            explosionPosition.z.add(offset),
+            time.mul(10).add(offset) // 動畫時間
+        ));
+    }).Else(() => {
+        d.assign(texture(brickRenderTargets[n].texture, uv()));
+        const a = d.w.floor().mul(0.01 * 6.28318);
+        d.xz.addAssign(vec2(cos(a), sin(a)).mul(d.y.mul(-0.01).add(0.05)));
+        d.w.assign(d.w.fract().sub(1 / 120).max(0).add(d.w.floor()));
+    });
+
+    return d;
+}
+
+const brickMaterialWith0 = new THREE.NodeMaterial();
+const brickMaterialWith1 = brickMaterialWith0.clone();
+
+brickMaterialWith0.fragmentNode = Fn(() => brick_proc(0))();
+brickMaterialWith1.fragmentNode = Fn(() => brick_proc(1))();
+
+// Ambient Light
+//const ambientLight = new THREE.AmbientLight(0xffffff, 0.01);
+//scene.add(ambientLight);
+
+// Instanced Mesh for Bricks
+const brickMaterial = new THREE.MeshLambertNodeMaterial({ color: new THREE.Color(10, 0, 20) });
+
+// 修改磚塊位置以實現爆炸動畫
+brickMaterial.positionNode = Fn(() => {
+    const i = float(instanceIndex);
+    const p = vec3().toVar();
+    const d = vec4().toVar();
+
+    d.assign(texture(brickRenderTargets[0].texture, vec2(i, i.mul(1 / brickRenderTargets[0].width).floor()).add(0.5).mul(1 / brickRenderTargets[0].width)));
+    p.assign(vec3(d.x, sin(d.w.fract().mul(3 * 3.14159)).abs().mul(d.y).mul(d.w.fract()), d.z));
+
+    // 如果是爆炸中的磚塊，添加擴散效果
+    If(explosionActive.equal(1).and(i.greaterThanEqual(spawnIndex)).and(i.lessThan(spawnIndex.add(10))), () => {
+        const t = explosionTime.sub(d.w.fract()).mul(2); // 爆炸動畫時間
+        p.addAssign(vec3(
+            sin(i).mul(t),
+            cos(i).mul(t),
+            sin(i.add(1)).mul(t)
+        ).mul(0.5)); // 向外擴散
+        If(t.greaterThan(1), () => {
+            p.y.assign(-10); // 超過1秒後消失
+        });
+    });
+
+    p.addAssign(positionLocal.mul(d.w.fract()));
+    return p;
+})();
+
+const bricks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), brickMaterial, MAX_BRICK_COUNT);
+bricks.castShadow = true;
+bricks.frustumCulled = false;
+scene.add(bricks);
+
+// Ground plane
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+ground.rotation.x = -1.57080;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Point light
+const pointLight = new THREE.PointLight(0xffcc66, 3, 100);
+pointLight.castShadow = true;
+pointLight.position.set(0, 1.4, 0);
+pointLight.layers.enable(LAYER_VOLUMETRIC_LIGHTING);
+scene.add(pointLight);
+
+pointLight.add(new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 6), new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending
+})));
+
+// Spot light
+const spotLight = new THREE.SpotLight(0xffffff, 100);
+spotLight.position.set(0, 9, -9);
+spotLight.target.position.set(0, 0.5 * 6, PENZ_POSITION);
+spotLight.angle = Math.PI / 6;
+spotLight.penumbra = 1;
+spotLight.decay = 2;
+spotLight.distance = 0;
+spotLight.map = new THREE.TextureLoader().load("colors_2.png");
+spotLight.castShadow = true;
+spotLight.layers.enable(LAYER_VOLUMETRIC_LIGHTING);
+scene.add(spotLight);
+scene.add(spotLight.target);
+
+spotLight.shadow.intensity = 0.98;
+spotLight.shadow.mapSize.width = spotLight.shadow.mapSize.height = 1024;
+spotLight.shadow.focus = 1;
+spotLight.shadow.bias = -0.003;
+
+spotLight.shadow.camera.near = 1;
+spotLight.shadow.camera.far = 25;
+
+// Post-processing setup
+const postProcessing = new THREE.PostProcessing(renderer);
+const scenePass = pass(scene, camera);
+
+volumeNodeMaterial.depthNode = scenePass.getTextureNode("depth").sample(screenUV);
+
+const volumeLightingLayers = new THREE.Layers();
+volumeLightingLayers.disableAll();
+volumeLightingLayers.enable(LAYER_VOLUMETRIC_LIGHTING);
+const volumetricPass = pass(scene, camera, { depthBuffer: false });
+volumetricPass.setLayers(volumeLightingLayers);
+
+const denoiseStrength = uniform(0.6);
+const blurredVolumetricPass = gaussianBlur(volumetricPass, denoiseStrength);
+
+// GUI parameters and setup
+const guiParams = { quality: 1, resolution: 0.1, denoise: true };
+const gui = new GUI();
+
+setResolution();
+function setResolution() { volumetricPass.setResolution(guiParams.resolution); }
+
+const volumetricLightingIntensity = uniform(1);
+
+setDenoise();
+function setDenoise() {
+    const d = guiParams.denoise ? blurredVolumetricPass : volumetricPass;
+    postProcessing.outputNode = scenePass.add(d.mul(volumetricLightingIntensity));
+    postProcessing.needsUpdate = true;
+}
+
+let guiFolder = gui.addFolder("Ray Marching").close();
+guiFolder.add(guiParams, "resolution", 0.1, 0.5).name("Resolution").onChange(setResolution);
+guiFolder.add(volumeNodeMaterial, "steps", 2, 12).name("Step Count");
+guiFolder.add(denoiseStrength, "value", 0, 1).name("Denoise Strength");
+guiFolder.add(guiParams, "denoise").name("Denoise").onChange(setDenoise);
+
+guiFolder = gui.addFolder("Lighting / Scene").close();
+guiFolder.add(pointLight, "intensity", 0, 6).name("Point Light");
+guiFolder.add(spotLight, "intensity", 0, 200).name("Spot Light");
+guiFolder.add(volumetricLightingIntensity, "value", 0, 2).name("Fog Intensity");
+guiFolder.add(smokeAmount, "value", 0, 3).name("Smoke Amount");
+
+// Resize event listener
+window.addEventListener("resize", onWindowResize);
+onWindowResize();
+
+function onWindowResize() {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(width, height);
+}
+
+// Penguin model variables
+let penguin, leftArm, rightArm, neckRoot, neckMid, neckEnd, beak;
+let penguinRotation = 0; // Penguin's rotation angle (radians)
+
+// Load the penguin model
+const gltfLoader = new GLTFLoader();
+gltfLoader.load("penguin.glb?1", function (gltf) {
+        penguin = gltf.scene;
+
+    penguin.traverse(function (object) {
+        if (0 <= object.name.indexOf("arm_l")) leftArm = object;
+        else if (0 <= object.name.indexOf("arm_r")) rightArm = object;
+        else if (0 <= object.name.indexOf("neck_0")) neckRoot = object;
+        else if (0 <= object.name.indexOf("neck_1")) neckMid = object;
+        else if (0 <= object.name.indexOf("neck_2")) neckEnd = object;
+        else if (0 <= object.name.indexOf("beak")) beak = object;
+
+        if (object.geometry) {
+            object.castShadow = object.receiveShadow = true;
+        }
+
+        if (object.material) object.material = new THREE.MeshPhongMaterial({ color: 0xffffff });
+    });
+    penguin.position.set(0, 0, PENZ_POSITION);
+    penguin.scale.setScalar(0.5);
+    scene.add(penguin);
+});
+
+function UpdateSpotLight(soldier)
+{
+    const spotlightDirection = new THREE.Vector3(0, 3, -15);
+    spotlightDirection.applyQuaternion(soldier.quaternion);
+    spotlightDirection.normalize();
+    const lightPosition = soldier.position.clone().add(spotlightDirection.multiplyScalar(0));
+    lightPosition.y += 3.5;
+    spotLight.position.copy(lightPosition);
+
+    const direction = new THREE.Vector3(0, 0, 5).applyQuaternion(soldier.quaternion);
+    const lightDistance = 5;
+    spotLight.target.position.copy(soldier.position.clone().add(direction.multiplyScalar(lightDistance)));
+    scene.add(spotLight.target);
+}
+
+let frameCount = 0; // Frame counter
+
+
+// 添加物理引擎（使用Cannon.js）
+import * as CANNON from 'https://cdn.skypack.dev/cannon-es';
+const world = new CANNON.World();
+world.gravity.set(0, -9.82, 0); // 重力
+world.allowSleep = false; // 啟用休眠機制
+world.broadphase = new CANNON.SAPBroadphase(world); // 使用更高效的廣相檢測
+world.defaultContactMaterial.friction = 0.5;
+world.defaultContactMaterial.restitution = 0.0;
+
+// 修改全局常量
+const BUILDING_COUNT = 10; // 減少建築物數量
+const BUILDING_MIN_SIZE = 10; // 最小層數（
+const BUILDING_MAX_HEIGHT = 20; // 減少最大層數
+const BRICK_HEIGHT = 2.0;    // Jenga塊高度
+const BRICK_WIDTH = 2.0;     // Jenga塊寬度
+const BRICK_LENGTH = 6.0;    // Jenga塊長度（
+
+// 全局變數
+let buildings = [];
+let buildingInstances = []; // 儲存 InstancedMesh 實例
+let buildingPhysicsBodies = []; // 儲存建築物的物理體（初始為靜態複合體）
+let dynamicBricks = []; // 儲存分解後的動態方塊（用於射線檢測）
+
+// 修改建築物初始化函數
+function initBuildings() {
+    const brickGeometry = new THREE.BoxGeometry(BRICK_LENGTH, BRICK_HEIGHT, BRICK_WIDTH);
+    const brickMaterial = new THREE.MeshLambertMaterial({ color: 0x888888 });
+
+    // 地面物理體
+    const groundBody = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Plane(),
+        position: new CANNON.Vec3(0, 0, 0),
+        material: new CANNON.Material("groundMaterial")
+    });
+    groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+    world.addBody(groundBody);
+
+    // 設置物理世界的摩擦力和反彈係數
+    const brickMaterialPhysics = new CANNON.Material("brickMaterial");
+    const brickGroundContact = new CANNON.ContactMaterial(groundBody.material, brickMaterialPhysics, {
+        friction: 0.5,
+        restitution: 0.0
+    });
+    const brickBrickContact = new CANNON.ContactMaterial(brickMaterialPhysics, brickMaterialPhysics, {
+        friction: 0.5,
+        restitution: 0.0
+    });
+    world.addContactMaterial(brickGroundContact);
+    world.addContactMaterial(brickBrickContact);
+
+    buildings = [];
+    buildingInstances = [];
+    buildingPhysicsBodies = [];
+    dynamicBricks = [];
+
+    for (let i = 0; i < BUILDING_COUNT; i++) {
+        const height = Math.floor(Math.random() * (BUILDING_MAX_HEIGHT - BUILDING_MIN_SIZE + 1)) + BUILDING_MIN_SIZE;
+        const buildingBricks = [];
+        const baseX = (Math.random() - 0.5) * GROUND_SIZE * 0.8;
+        const baseZ = (Math.random() - 0.5) * GROUND_SIZE * 0.8;
+
+        const bricksPerLayer = 3;
+        const totalBricks = height * bricksPerLayer;
+
+        // 創建 InstancedMesh
+        const instancedMesh = new THREE.InstancedMesh(brickGeometry, brickMaterial, totalBricks);
+        instancedMesh.castShadow = true;
+        instancedMesh.receiveShadow = true;
+        scene.add(instancedMesh);
+
+        // 創建複合物理體（初始為靜態）
+        const compoundBody = new CANNON.Body({
+            mass: 0,
+            position: new CANNON.Vec3(baseX, 0, baseZ),
+            material: brickMaterialPhysics
+        });
+
+        let instanceIndex = 0;
+        for (let y = 0; y < height; y++) {
+            const isEvenLayer = y % 2 === 0;
+            for (let j = 0; j < bricksPerLayer; j++) {
+                let posX, posY, posZ, rotationY;
+
+                if (isEvenLayer) {
+                    // 偶數層：沿Z軸排列
+                    posX = baseX; // 間距為寬度
+                    posY = y * BRICK_HEIGHT + BRICK_HEIGHT / 2; // 精確高度
+                    posZ = baseZ + (j - 1) * BRICK_WIDTH;
+                    rotationY = 0; // 沿X軸方向
+                } else {
+                    // 奇數層：沿X軸排列
+                    posX = baseX + (j - 1) * BRICK_WIDTH;
+                    posY = y * BRICK_HEIGHT + BRICK_HEIGHT / 2; // 精確高度
+                    posZ = baseZ; // 間距為寬度
+                    rotationY = Math.PI / 2; // 旋轉90度沿Z軸
+                }
+
+                const matrix = new THREE.Matrix4();
+                matrix.makeRotationY(rotationY);
+                matrix.setPosition(posX, posY, posZ);
+                instancedMesh.setMatrixAt(instanceIndex, matrix);
+
+                const brickShape = new CANNON.Box(new CANNON.Vec3(BRICK_LENGTH/2, BRICK_HEIGHT/2, BRICK_WIDTH/2));
+                const shapeOffset = new CANNON.Vec3(posX - baseX, posY, posZ - baseZ);
+                const shapeOrientation = new CANNON.Quaternion();
+                shapeOrientation.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), rotationY);
+                compoundBody.addShape(brickShape, shapeOffset, shapeOrientation);
+
+                buildingBricks.push({
+                    instanceId: instanceIndex,
+                    position: new THREE.Vector3(posX, posY, posZ),
+                    rotationY: rotationY,
+                    active: true
+                });
+
+                instanceIndex++;
+            }
+        }
+
+        world.addBody(compoundBody);
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        buildings.push(buildingBricks);
+        buildingInstances.push(instancedMesh);
+        buildingPhysicsBodies.push(compoundBody);
+    }
+}
+
+// 分解建築物為動態物理體
+function decomposeBuilding(buildingIndex, hitBrickIndex) {
+    const building = buildings[buildingIndex];
+    const instancedMesh = buildingInstances[buildingIndex];
+    const compoundBody = buildingPhysicsBodies[buildingIndex];
+
+    // 移除原有的複合物理體
+    world.removeBody(compoundBody);
+
+    // 為每個未被移除的Jenga塊創建獨立的動態物理體
+    const remainingBricks = [];
+    building.forEach((brick, index) => {
+        if (!brick.active || index === hitBrickIndex) return;
+
+        const brickBody = new CANNON.Body({
+            mass: 1,
+            shape: new CANNON.Box(new CANNON.Vec3(BRICK_LENGTH/2, BRICK_HEIGHT/2, BRICK_WIDTH/2)),
+            position: new CANNON.Vec3(brick.position.x, brick.position.y, brick.position.z),
+            material: compoundBody.material,
+            linearDamping: 0.1,
+            angularDamping: 0.1
+        });
+        brickBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), brick.rotationY);
+        brickBody.allowSleep = false;
+        brickBody.sleepSpeedLimit = 0.1;
+        brickBody.sleepTimeLimit = 0.5;
+        world.addBody(brickBody);
+
+        // 創建一個獨立的 Mesh 用於射線檢測
+        const brickMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(BRICK_LENGTH, BRICK_HEIGHT, BRICK_WIDTH),
+            new THREE.MeshLambertMaterial({ color: 0x888888, visible: false }) // 不可見
+        );
+        brickMesh.position.copy(brick.position);
+        brickMesh.rotation.y = brick.rotationY;
+        scene.add(brickMesh);
+
+        remainingBricks.push({
+            instanceId: brick.instanceId,
+            physicsBody: brickBody,
+            detectionMesh: brickMesh, // 用於射線檢測的 Mesh
+            active: true
+        });
+    });
+
+    // 更新建築物資料
+    buildings[buildingIndex] = remainingBricks;
+    buildingPhysicsBodies[buildingIndex] = null;
+    dynamicBricks = dynamicBricks.concat(remainingBricks); // 添加到動態方塊列表
+}
+
+// 修改 checkBeamCollision 函數
+function checkBeamCollision(beam) {
+    const raycaster = new THREE.Raycaster();
+    const origin = beam.position.clone();
+    const direction = new THREE.Vector3();
+    beam.getWorldDirection(direction);
+    
+    raycaster.set(origin, direction);
+    
+    let explosionTriggered = false;
+    let hitBuildingIndex = -1;
+    let hitBrickIndex = -1;
+
+    // 首先檢查未分解的建築物（使用 InstancedMesh）
+    for (let i = 0; i < buildingInstances.length; i++) {
+        if (buildingPhysicsBodies[i] === null) continue; // 已分解，跳過
+
+        const intersects = raycaster.intersectObject(buildingInstances[i]);
+        if (intersects.length > 0) {
+            const instanceId = intersects[0].instanceId;
+            const building = buildings[i];
+            hitBrickIndex = building.findIndex(brick => brick.instanceId === instanceId && brick.active);
+            if (hitBrickIndex !== -1) {
+                hitBuildingIndex = i;
+                break;
+            }
+        }
+    }
+
+    // 如果未找到未分解的建築物，檢查分解後的動態方塊
+    if (hitBuildingIndex === -1) {
+        const intersects = raycaster.intersectObjects(dynamicBricks.map(brick => brick.detectionMesh));
+        if (intersects.length > 0) {
+            const hitMesh = intersects[0].object;
+            // 找到對應的動態方塊
+            for (let i = 0; i < buildings.length; i++) {
+                const building = buildings[i];
+                hitBrickIndex = building.findIndex(brick => brick.detectionMesh === hitMesh && brick.active);
+                if (hitBrickIndex !== -1) {
+                    hitBuildingIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (hitBuildingIndex !== -1 && hitBrickIndex !== -1) {
+        const building = buildings[hitBuildingIndex];
+        const hitBrick = building[hitBrickIndex];
+        const hitPoint = hitBrick.detectionMesh ? hitBrick.detectionMesh.position : hitBrick.position;
+
+        // 標記該塊為已移除
+        hitBrick.active = false;
+
+        // 更新 InstancedMesh（隱藏該實例）
+        const instancedMesh = buildingInstances[hitBuildingIndex];
+        const dummy = new THREE.Object3D();
+        dummy.position.set(0, -1000, 0);
+        const matrix = new THREE.Matrix4();
+        matrix.compose(dummy.position, dummy.quaternion, dummy.scale);
+        instancedMesh.setMatrixAt(hitBrick.instanceId, matrix);
+        instancedMesh.instanceMatrix.needsUpdate = true;
+
+        // 如果是動態方塊，移除其檢測用 Mesh 和物理體
+        if (hitBrick.detectionMesh) {
+            scene.remove(hitBrick.detectionMesh);
+            dynamicBricks = dynamicBricks.filter(brick => brick.detectionMesh !== hitBrick.detectionMesh);
+        }
+        if (hitBrick.physicsBody) {
+            world.removeBody(hitBrick.physicsBody);
+        }
+
+        // 如果建築物尚未分解，則分解為動態物理體
+        if (buildingPhysicsBodies[hitBuildingIndex] !== null) {
+            decomposeBuilding(hitBuildingIndex, hitBrickIndex);
+        }
+
+        // 觸發爆炸效果
+        explosionPosition.value.set(hitPoint.x, hitPoint.y, hitPoint.z);
+        explosionActive.value = 1;
+        explosionTime.value = performance.now() / 1000;
+        spawnIndex.value = (spawnIndex.value + 2) % MAX_BRICK_COUNT;
+        explosionTriggered = true;
+    }
+
+    return explosionTriggered;
+}
+
+// 修改 tick 函數
+function tick() {
+    if (!penguin) return;
+
+    const delta = 0.016;
+    const timeValue = 0.001 * performance.now();
+
+    // 更新物理世界
+    world.step(delta);
+
+    // 同步物理位置到 InstancedMesh 和檢測用 Mesh
+    buildings.forEach((building, buildingIndex) => {
+        const instancedMesh = buildingInstances[buildingIndex];
+        if (buildingPhysicsBodies[buildingIndex] !== null) return;
+
+        building.forEach(brick => {
+            if (!brick.active || !brick.physicsBody) return;
+
+            const body = brick.physicsBody;
+            const position = new THREE.Vector3(body.position.x, body.position.y, body.position.z);
+            const quaternion = new THREE.Quaternion(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+
+            // 更新 InstancedMesh
+            const matrix = new THREE.Matrix4();
+            matrix.compose(position, quaternion, new THREE.Vector3(1, 1, 1));
+            instancedMesh.setMatrixAt(brick.instanceId, matrix);
+
+            // 更新檢測用 Mesh
+            if (brick.detectionMesh) {
+                brick.detectionMesh.position.copy(position);
+                brick.detectionMesh.quaternion.copy(quaternion);
+            }
+        });
+        instancedMesh.instanceMatrix.needsUpdate = true;
+    });
+
+    // 原有邏輯保持不變
+    if (keyboard.left) penguinRotation -= ROTATION_SPEED;
+    if (keyboard.right) penguinRotation += ROTATION_SPEED;
+    if (keyboard.forward || keyboard.backward) {
+        const direction = new THREE.Vector3(0, 0, keyboard.forward ? 1 : -1);
+        direction.applyQuaternion(penguin.quaternion);
+        penguin.position.addScaledVector(direction, MOVE_SPEED);
+    }
+    penguin.rotation.y = -penguinRotation;
+
+    const beamBaseX = 0;
+    const beamBaseZ = 6;
+    const cosRotation = Math.cos(penguinRotation);
+    const sinRotation = Math.sin(penguinRotation);
+    const targetX = penguin.position.x + (beamBaseX * cosRotation - beamBaseZ * sinRotation);
+    const targetZ = penguin.position.z + (beamBaseX * sinRotation + beamBaseZ * cosRotation);
+
+    const aim = new THREE.Vector2(
+        targetX + 1 * Math.cos(0.7 * timeValue*8),
+        targetZ + 1 * Math.sin(0.45 * timeValue*8)
+    );
+
+    pointLight.position.set(aim.x, 0.1 + 0.5 * Math.random(), aim.y);
+
+    orthographicPlane.material = (brickRenderTargetIndex < 0.5) ? brickMaterialWith0 : brickMaterialWith1;
+    brickRenderTargetIndex = 1 - brickRenderTargetIndex;
+    renderer.setRenderTarget(brickRenderTargets[brickRenderTargetIndex]);
+    renderer.render(orthographicScene, orthographicCamera);
+    renderer.setRenderTarget(null);
+
+    shotHalf.value = 0.25 + 0.25 * Math.sin(timeValue);
+
+    const redHit = checkBeamCollision(beamRed);
+    const blueHit = checkBeamCollision(beamBlue);
+
+    if (explosionActive.value === 1 && (performance.now() / 1000 - explosionTime.value) > 1) {
+        explosionActive.value = 0;
+    }
+
+    let neckAngle = Math.atan2(aim.x - penguin.position.x, aim.y - penguin.position.z) + penguinRotation;
+    neckRoot.rotation.y = neckAngle;
+
+    let aimDistance = Math.sqrt(
+        (aim.x - penguin.position.x) * (aim.x - penguin.position.x) +
+        (aim.y - penguin.position.z) * (aim.y - penguin.position.z)
+    );
+
+    const baseScale = 0.5;
+    const beamBasePositionRight = new THREE.Vector3(
+        baseScale * (2.5 * Math.sin(neckAngle - 0.4)),
+        baseScale * (6.7 + 0.1 * aimDistance),
+        baseScale * (2.5 * Math.cos(neckAngle - 0.4))
+    );
+    const beamBasePositionLeft = new THREE.Vector3(
+        baseScale * (2.5 * Math.sin(neckAngle + 0.4)),
+        baseScale * (6.7 + 0.1 * aimDistance),
+        baseScale * (2.5 * Math.cos(neckAngle + 0.4))
+    );
+
+    beamRed.position.set(
+        penguin.position.x + (beamBasePositionRight.x * cosRotation - beamBasePositionRight.z * sinRotation),
+        beamBasePositionRight.y,
+        penguin.position.z + (beamBasePositionRight.x * sinRotation + beamBasePositionRight.z * cosRotation)
+    );
+    beamRed.up.copy(camera.position);
+    beamRed.lookAt(aim.x, 0, aim.y);
+
+    beamBlue.position.set(
+        penguin.position.x + (beamBasePositionLeft.x * cosRotation - beamBasePositionLeft.z * sinRotation),
+        baseScale * (6.7 + 0.1 * aimDistance),
+        penguin.position.z + (beamBasePositionLeft.x * sinRotation + beamBasePositionLeft.z * cosRotation)
+    );
+    beamBlue.up.copy(camera.position);
+    beamBlue.lookAt(aim.x, 0, aim.y);
+
+    const armRotation = Math.sin(15 * timeValue);
+    leftArm.rotation.z = 0.5 * armRotation;
+    rightArm.rotation.z = -0.5 * armRotation;
+    beak.rotation.x = 0.25 + 0.2 * armRotation;
+    neckMid.rotation.x = neckEnd.rotation.x = 1.1 - 0.04 * aimDistance;
+
+    orbitControls.target.copy(penguin.position);
+    orbitControls.update();
+
+    //camera.position.set(penguin.position.x, 80, penguin.position.z);
+    //camera.lookAt(penguin.position);
+ 
+    postProcessing.render();
+    stats.update();
+    orbitControls.update();
+    frameCount++;
+}
+// 初始化場景
+initBuildings();
+
+</script>
+</body>
+</html>
