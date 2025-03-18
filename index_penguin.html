@@ -5,20 +5,35 @@
 <div id="container_1" style="position: absolute; top: 0px; left: 0px;"></div>
 
 <script>
-const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01/master/';
-///const ext_resource_url = './';
+///const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
+const ext_resource_url = '.';
 </script>
 
+<!-----    
+"three" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.module.js",
+"three/webgpu" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.webgpu.min.js",
+"three/tsl" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.tsl.min.js",
+"three/addons/" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/examples/jsm/"
+
+"three" : "./node_modules/three/build/three.module.js",
+"three/webgpu" : "./node_modules/three/build/three.webgpu.min.js",
+"three/tsl" : "./node_modules/three/build/three.tsl.min.js",
+"three/addons/" : "./node_modules/three/examples/jsm/"
+--->
+
 <script type="importmap">{ "imports" : {
-    "three" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.webgpu.min.js",
+    "three" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.module.js",
     "three/webgpu" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.webgpu.min.js",
     "three/tsl" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.tsl.min.js",
     "three/addons/" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/examples/jsm/"
 }}</script>
-
+    
 <script type="module">
 
-import * as THREE from "three";
+// 使用相對路徑導入 Three.js 核心和模塊
+///import * as THREE from "three";
+import * as THREE from "three/webgpu";
+
 import {
     Fn, If, uniform, time, texture, uv, instanceIndex,
     pass, screenUV, screenCoordinate,
@@ -31,9 +46,7 @@ import {
 import Stats from "three/addons/libs/stats.module.js";
 import { GUI } from "three/addons/libs/lil-gui.module.min.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-
 import { bayer16 } from "three/addons/tsl/math/Bayer.js";
 import { gaussianBlur } from "three/addons/tsl/display/GaussianBlurNode.js";
 
@@ -334,11 +347,32 @@ bricks.castShadow = true;
 bricks.frustumCulled = false;
 scene.add(bricks);
 
-// Ground plane
+const textureLoader = new THREE.TextureLoader();
+function createFloor(sceneInfo, gameInfo) {
+    const floorTexture = textureLoader.load( ext_resource_url + '/textures/floor.png');
+    floorTexture.wrapS = THREE.RepeatWrapping;
+    floorTexture.wrapT = THREE.RepeatWrapping;
+    const mapSize = 12;
+    //floorTexture.repeat.set(mapSize / 4, mapSize / 4);
+    floorTexture.repeat.set(1, 1);
+
+    const floorSize = mapSize * 24;
+    const floorGeometry = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE);
+    const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -1.57080;
+    //floor.position.set(floorSize / 2, 0, floorSize / 2);
+    floor.receiveShadow = true;
+    scene.add(floor);
+}
+
+createFloor();
+/*// Ground plane
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), new THREE.MeshStandardMaterial({ color: 0xffffff }));
 ground.rotation.x = -1.57080;
 ground.receiveShadow = true;
 scene.add(ground);
+*/
 
 // Point light
 const pointLight = new THREE.PointLight(0xffcc66, 3, 100);
@@ -359,7 +393,7 @@ spotLight.angle = Math.PI / 6;
 spotLight.penumbra = 1;
 spotLight.decay = 2;
 spotLight.distance = 0;
-spotLight.map = new THREE.TextureLoader().load("colors_2.png");
+spotLight.map = new THREE.TextureLoader().load(ext_resource_url+"/image/colors_2.png");
 spotLight.castShadow = true;
 spotLight.layers.enable(LAYER_VOLUMETRIC_LIGHTING);
 scene.add(spotLight);
@@ -436,7 +470,7 @@ let penguinRotation = 0; // Penguin's rotation angle (radians)
 
 // Load the penguin model
 const gltfLoader = new GLTFLoader();
-gltfLoader.load("penguin.glb?1", function (gltf) {
+gltfLoader.load(ext_resource_url+"/3d_module/penguin.glb?1", function (gltf) {
         penguin = gltf.scene;
 
     penguin.traverse(function (object) {
@@ -501,8 +535,17 @@ let dynamicBricks = []; // 儲存分解後的動態方塊（用於射線檢測�
 
 // 修改建築物初始化函數
 function initBuildings() {
-    const brickGeometry = new THREE.BoxGeometry(BRICK_LENGTH, BRICK_HEIGHT, BRICK_WIDTH);
-    const brickMaterial = new THREE.MeshLambertMaterial({ color: 0x888888 });
+    const textureLoader = new THREE.TextureLoader();
+            const obstacleTexture = textureLoader.load(ext_resource_url + '/textures/obstacle.png');
+            obstacleTexture.wrapS = THREE.RepeatWrapping;
+            obstacleTexture.wrapT = THREE.RepeatWrapping;
+            obstacleTexture.repeat.set(1, 1); // 可根據障礙物大小調整重複次數
+
+            const brickGeometry = new THREE.BoxGeometry(BRICK_LENGTH, BRICK_HEIGHT, BRICK_WIDTH);
+            const brickMaterial = new THREE.MeshStandardMaterial({ map: obstacleTexture });
+
+    //const brickGeometry = new THREE.BoxGeometry(BRICK_LENGTH, BRICK_HEIGHT, BRICK_WIDTH);
+    //const brickMaterial = new THREE.MeshLambertMaterial({ color: 0x888888 });
 
     // 地面物理體
     const groundBody = new CANNON.Body({
