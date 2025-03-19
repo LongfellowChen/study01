@@ -100,25 +100,17 @@
 <button id="attack-button">Attack</button>
 <div id="debug"></div>
 
-<!-----    
-"three" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.module.js",
-"three/webgpu" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.webgpu.min.js",
-"three/tsl" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.tsl.min.js",
-"three/addons/" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/examples/jsm/"
+<script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.module.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.174.0/examples/jsm/"
+      }
+    }
+  </script>
 
-"three" : "./node_modules/three/build/three.module.js",
-"three/webgpu" : "./node_modules/three/build/three.webgpu.min.js",
-"three/tsl" : "./node_modules/three/build/three.tsl.min.js",
-"three/addons/" : "./node_modules/three/examples/jsm/"
---->
-
-<script type="importmap">{ "imports" : {
-    "three" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.module.js",
-    "three/webgpu" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.webgpu.min.js",
-    "three/tsl" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/build/three.tsl.min.js",
-    "three/addons/" : "https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master/node_modules/three/examples/jsm/"
-}}</script>
-    
 <script type="module">
 
 // 使用相對路徑導入 Three.js 核心和模塊
