@@ -311,9 +311,9 @@
         //这里是生成高度场的代码
         /*
         var matrix = [];//创建构造高度场的数组
-        for (var i = 0; i < floorSize; i++) {
+        for (var i = 0; i < floorSize*10; i++) {
             matrix.push([]);
-            for (var j = 0; j < floorSize; j++) {
+            for (var j = 0; j < floorSize*10; j++) {
                 //高度由两个余弦函数叠加形成
                 var height = Math.cos(i / floorSize * Math.PI * 8) * Math.cos(j / floorSize * Math.PI * 8);
                 matrix[i].push(height)
@@ -321,22 +321,22 @@
         }
         */
         
-        /*
+        
         const simplex = new SimplexNoise();
         var matrix = [];//创建构造高度场的数组
-        for (var i = 0; i < floorSize; i++) {
+        for (var i = 0; i < floorSize*gameInfo.cellSize; i++) {
             matrix.push([]);
-            for (var j = 0; j < floorSize; j++) {
+            for (var j = 0; j < floorSize*gameInfo.cellSize; j++) {
                 //高度由两个余弦函数叠加形成
                 const noiseValue = simplex.noise2D(i / 20, j / 20);
                 var height = (noiseValue + 1) * 5;
                 matrix[i].push(height)
             }
         }
-        */
+        
 
-        ///const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, {elementSize: 1 })
-        var heightfieldShape = new CANNON.Heightfield(matrix, { elementSize: 1 });
+        const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, {elementSize: gameInfo.cellSize })
+        ///var heightfieldShape = new CANNON.Heightfield(matrix, { elementSize: 1 });
         //var hfBody = new CANNON.Body({ mass: 0, material: physicsMaterial});
         var heightfieldBody = new CANNON.Body({ mass: 0});
         var q = new CANNON.Quaternion();
