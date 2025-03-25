@@ -99,8 +99,8 @@
             }
         }
     </script>
-
     <script type="module">
+        const debugPhysics = true; // 設為 true 啟用物理形狀可視化
 
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -109,21 +109,58 @@
         const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
         const textureLoader = new THREE.TextureLoader();
 
-        let init_done = false;
+        function createDebugMeshFromCannonShape(body, shape) {
+            let debugMesh;
 
-        function updateDebugLog(message, append = true) {
+            if (shape instanceof CANNON.Box) {
+                const size = shape.halfExtents;
+                const geometry = new THREE.BoxGeometry(size.x * 2, size.y * 2, size.z * 2);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Sphere) {
+                const geometry = new THREE.SphereGeometry(shape.radius, 16, 16);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Heightfield) {
+                const geometry = new THREE.BufferGeometry();
+                const vertices = [];
+                const indices = [];
+                const { elementSize } = shape;
+                const data = shape.data;
 
-            if( !init_done )
-            {
-                console.log(message);
+                for (let x = 0; x < data.length - 1; x++) {
+                    for (let z = 0; z < data[0].length - 1; z++) {
+                        const y00 = data[x][z];
+                        const y10 = data[x + 1][z];
+                        const y01 = data[x][z + 1];
+                        const y11 = data[x + 1][z + 1];
+
+                        const xPos = x * elementSize;
+                        const zPos = z * elementSize;
+
+                        vertices.push(xPos, y00, zPos);
+                        vertices.push(xPos + elementSize, y10, zPos);
+                        vertices.push(xPos, y01, zPos + elementSize);
+                        vertices.push(xPos + elementSize, y11, zPos + elementSize);
+
+                        const base = (x * (data[0].length - 1) + z) * 4;
+                        indices.push(base, base + 1, base + 2);
+                        indices.push(base + 1, base + 3, base + 2);
+                    }
+                }
+
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setIndex(indices);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
             }
 
-            const debugElement = document.getElementById('debug');
-            if (append) {
-                debugElement.innerText += `\n${message}`;
-            } else {
-                debugElement.innerText = message;
+            if (debugMesh) {
+                debugMesh.position.copy(body.position);
+                debugMesh.quaternion.copy(body.quaternion);
             }
+
+            return debugMesh;
         }
 
         function getShortestAngleDifference(currentAngle, targetAngle) {
@@ -172,7 +209,6 @@
             const world = new CANNON.World();
             world.gravity.set(0, -9.8, 0);
             world.broadphase = new CANNON.NaiveBroadphase();
-            world.solver.iterations = 10; // 增加迭代次數以提高精度
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
@@ -195,57 +231,138 @@
         }
 
         function createFloor(sceneInfo, gameInfo) {
-    const floorSize = gameInfo.gridSize * gameInfo.cellSize;
-    const geometry = new THREE.PlaneGeometry(floorSize, floorSize, gameInfo.gridSize - 1, gameInfo.gridSize - 1);
-    geometry.rotateX(-Math.PI / 2);
+            const floorSize = gameInfo.gridSize * gameInfo.cellSize;
+            const geometry = new THREE.PlaneGeometry(floorSize, floorSize, gameInfo.gridSize - 1, gameInfo.gridSize - 1);
+            geometry.rotateX(-Math.PI / 2);
 
-    const heightData = gameInfo.heightData;
-    const vertices = geometry.attributes.position.array;
-    for (let i = 0, j = 0; i < vertices.length; i += 3, j++) {
-        const x = Math.floor(j / gameInfo.gridSize);
-        const z = j % gameInfo.gridSize;
-        vertices[i + 1] = heightData[x][z];
-    }
-    geometry.computeVertexNormals();
+            const heightData = gameInfo.heightData;
+            const vertices = geometry.attributes.position.array;
 
-    const floorTexture = textureLoader.load(ext_resource_url + '/textures/floor.png');
-    floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
-    floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
-    const floorMaterial = new THREE.MeshStandardMaterial({map: floorTexture});
-    const floor = new THREE.Mesh(geometry, floorMaterial);
-    floor.position.set(floorSize / 2, 0, floorSize / 2);
-    floor.receiveShadow = true;
-    sceneInfo.scene.add(floor);
+            // 左右鏡像：反轉 X 軸索引
+            for (let i = 0, j = 0; i < vertices.length; i += 3, j++) {
+                const x = Math.floor(j / gameInfo.gridSize);
+                const z = j % gameInfo.gridSize;
+                // 鏡像後的 X 索引
+                //const mirroredX = gameInfo.gridSize - 1 - x;
+                vertices[i + 1] = heightData[x][z]; // 使用鏡像後的 X 索引
+            }
+            geometry.computeVertexNormals();
 
-    const heightfieldData = [];
-    for (let z = 0; z < gameInfo.gridSize; z++) { // 移除 z 軸反轉，測試原始順序
-        const row = [];
-        for (let x = 0; x < gameInfo.gridSize; x++) {
-            row.push(heightData[x][z]);
+            const floorTexture = textureLoader.load(ext_resource_url + '/textures/floor.png');
+            floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
+            floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
+            const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
+            const floor = new THREE.Mesh(geometry, floorMaterial);
+            floor.position.set(floorSize / 2, 0, floorSize / 2);
+            floor.receiveShadow = true;
+            sceneInfo.scene.add(floor);
+
+            // 左右鏡像：反轉 heightData 的 X 軸
+            const mirroredHeightData = [];
+            for (let x = 0; x < gameInfo.gridSize; x++) {
+                mirroredHeightData[x] = [];
+                for (let z = 0; z < gameInfo.gridSize; z++) {
+                    mirroredHeightData[x][z] = heightData[gameInfo.gridSize - 1 - x][z];
+                }
+            }
+
+            /*
+            // 創建高度場物理體
+            //const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, { elementSize: gameInfo.cellSize+0.2 });
+            const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, {elementSize: 1 })
+
+            const heightfieldBody = new CANNON.Body({ mass: 0 });
+            //heightfieldBody.addShape(heightfieldShape);
+            var q = new CANNON.Quaternion();
+            q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), - Math.PI / 2);
+            heightfieldBody.addShape(heightfieldShape, new CANNON.Vec3(-floorSize / 2, 0, floorSize / 2), q);//由于这个高度场是XOY平面第一象限上，所以需要旋转和平移，addShape方法为我们提供了这个功能。
+
+            // 調整位置：考慮鏡像後的坐標系
+            heightfieldBody.position.set(0, 0, floorSize);
+            //heightfieldBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI );
+
+            // 繞 X 軸旋轉 180 度
+            const qX = new CANNON.Quaternion();
+            qX.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI);
+
+            // 繞 Z 軸旋轉 180 度
+            const qY = new CANNON.Quaternion();
+            qY.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -(Math.PI/2)*3);
+
+            // 繞 Z 軸旋轉 180 度
+            const qZ = new CANNON.Quaternion();
+            qZ.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), Math.PI);
+
+            // 組合旋轉：先繞 X 軸，再繞 Z 軸
+            heightfieldBody.quaternion.copy(qZ.mult(qY).mult(qX));
+
+            sceneInfo.world.addBody(heightfieldBody);
+            gameInfo.floorBody = heightfieldBody;
+
+            // 調試可視化
+            if (debugPhysics) {
+                const debugMesh = createDebugMeshFromCannonShape(heightfieldBody, heightfieldShape);
+                sceneInfo.scene.add(debugMesh);
+                gameInfo.floorDebugMesh = debugMesh; // 保存以便後續更新
+            }
+            */
+
+
+        //这里是生成高度场的代码
+        /*
+        var matrix = [];//创建构造高度场的数组
+        for (var i = 0; i < floorSize; i++) {
+            matrix.push([]);
+            for (var j = 0; j < floorSize; j++) {
+                //高度由两个余弦函数叠加形成
+                var height = Math.cos(i / floorSize * Math.PI * 8) * Math.cos(j / floorSize * Math.PI * 8);
+                matrix[i].push(height)
+            }
         }
-        heightfieldData.push(row);
-    }
+        */
+        
+        /*
+        const simplex = new SimplexNoise();
+        var matrix = [];//创建构造高度场的数组
+        for (var i = 0; i < floorSize; i++) {
+            matrix.push([]);
+            for (var j = 0; j < floorSize; j++) {
+                //高度由两个余弦函数叠加形成
+                const noiseValue = simplex.noise2D(i / 20, j / 20);
+                var height = (noiseValue + 1) * 5;
+                matrix[i].push(height)
+            }
+        }
+        */
 
-    const minHeight = Math.min(...heightfieldData.flat());
-    const maxHeight = Math.max(...heightfieldData.flat());
-    updateDebugLog(`Heightfield min height: ${minHeight.toFixed(2)}, max height: ${maxHeight.toFixed(2)}`);
-    updateDebugLog(`Heightfield size: ${gameInfo.gridSize}x${gameInfo.gridSize}, elementSize: ${gameInfo.cellSize}`);
-    updateDebugLog(`Heightfield data sample: [0][0]=${heightfieldData[0][0].toFixed(2)}, [1][1]=${heightfieldData[1][1].toFixed(2)}`);
+        ///const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, {elementSize: 1 })
+        var heightfieldShape = new CANNON.Heightfield(matrix, { elementSize: 1 });
+        //var hfBody = new CANNON.Body({ mass: 0, material: physicsMaterial});
+        var heightfieldBody = new CANNON.Body({ mass: 0});
+        var q = new CANNON.Quaternion();
+        q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), - Math.PI / 2);
+        heightfieldBody.addShape(heightfieldShape, new CANNON.Vec3(-floorSize / 2, 0, floorSize / 2), q);//由于这个高度场是XOY平面第一象限上，所以需要旋转和平移，addShape方法为我们提供了这个功能。
+        sceneInfo.world.addBody(heightfieldBody);
+        gameInfo.floorBody = heightfieldBody;
+        
+        if (debugPhysics) {
+            const debugMesh = createDebugMeshFromCannonShape(heightfieldBody, heightfieldShape);
+            sceneInfo.scene.add(debugMesh);
+            gameInfo.floorDebugMesh = debugMesh; // 保存以便後續更新
+        }
 
-    const heightfieldShape = new CANNON.Heightfield(heightfieldData, {
-        elementSize: gameInfo.cellSize
-    });
-    const heightfieldBody = new CANNON.Body({mass: 0});
-    heightfieldBody.addShape(heightfieldShape);
-    heightfieldBody.position.set(0, 0, 0); // 先測試原點位置
-    // 移除旋轉，保持默認朝上
-    sceneInfo.world.addBody(heightfieldBody);
 
-    gameInfo.floorBody = heightfieldBody;
-    updateDebugLog(`Heightfield created at position: (${heightfieldBody.position.x}, ${heightfieldBody.position.y}, ${heightfieldBody.position.z})`, false);
-}
+/*
+            const floorShape = new CANNON.Plane();
+            const floorBody = new CANNON.Body({mass: 0});
+            floorBody.addShape(floorShape);
+            floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+            floorBody.position.set(floorSize / 2, 2, floorSize / 2);
+            sceneInfo.world.addBody(floorBody);
+*/
+        }
 
-function createObstacles(sceneInfo, gameInfo) {
+        function createObstacles(sceneInfo, gameInfo) {
             const obstacleTexture = textureLoader.load(ext_resource_url + '/textures/obstacle.png');
             obstacleTexture.wrapS = obstacleTexture.wrapT = THREE.RepeatWrapping;
             obstacleTexture.repeat.set(1, 1);
@@ -330,101 +447,91 @@ function createObstacles(sceneInfo, gameInfo) {
         }
 
         function createPlayer(sceneInfo) {
-    let player = null;
-    const gltfLoader = new GLTFLoader();
-    gltfLoader.load(ext_resource_url + '/3d_module/RobotExpressive.glb', (gltf) => {
-        const soldier = gltf.scene;
-        soldier.scale.set(0.5, 0.5, 0.5);
-        const startX = 1, startZ = 1;
-        const posX = startX * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
-        const posZ = startZ * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
-        const terrainHeight = gameMaster.gameInfo.heightData[startX][startZ];
-        const posY = terrainHeight + 20;
-        soldier.position.set(posX, posY, posZ);
+            let player = null;
+            const gltfLoader = new GLTFLoader();
+            gltfLoader.load(ext_resource_url + '/3d_module/RobotExpressive.glb', (gltf) => {
+                const soldier = gltf.scene;
+                soldier.scale.set(0.5, 0.5, 0.5);
+                const startX = 1, startZ = 1; // 初始格子位置
+                const posX = startX * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
+                const posZ = startZ * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
+                const posY = gameMaster.gameInfo.heightData[startX][startZ]; // 根據地形高度設置
+                soldier.position.set(posX, posY, posZ);
 
-        updateDebugLog(`Player terrain height at (${startX}, ${startZ}): ${terrainHeight.toFixed(2)}`);
-        updateDebugLog(`Player initial pos: (${posX.toFixed(2)}, ${posY.toFixed(2)}, ${posZ.toFixed(2)})`);
+                const originalMaterials = new Map();
+                soldier.traverse(child => {
+                    if (child.isMesh) {
+                        child.castShadow = child.receiveShadow = true;
+                        originalMaterials.set(child, child.material.clone());
+                    }
+                });
+                sceneInfo.scene.add(soldier);
 
-        const originalMaterials = new Map();
-        soldier.traverse(child => {
-            if (child.isMesh) {
-                child.castShadow = child.receiveShadow = true;
-                originalMaterials.set(child, child.material.clone());
-            }
-        });
-        sceneInfo.scene.add(soldier);
+                const shape = new CANNON.Sphere(1);
+                const body = new CANNON.Body({mass: 5});
+                body.addShape(shape);
+                body.position.set(posX, posY + 10, posZ); // 物理體略高於地形避免嵌入
+                body.linearDamping = 0.1;
+                body.angularDamping = 0.1;
+                sceneInfo.world.addBody(body);
+                
+                const mixer = new THREE.AnimationMixer(soldier);
+                const animations = gltf.animations;
+                const actions = {
+                    idle: mixer.clipAction(animations[0]),
+                    run: mixer.clipAction(animations[3]),
+                    attack: mixer.clipAction(animations[5])
+                };
+                actions.idle.play();
 
-        const shape = new CANNON.Sphere(1);
-        const body = new CANNON.Body({mass: 5});
-        body.addShape(shape);
-        body.position.set(posX, posY, posZ);
-        body.linearDamping = 0;
-        body.angularDamping = 0;
-        sceneInfo.world.addBody(body);
+                const healthCanvas = document.createElement('canvas');
+                healthCanvas.width = 128;
+                healthCanvas.height = 16;
+                const healthCtx = healthCanvas.getContext('2d');
+                healthCtx.fillStyle = '#00ff00';
+                healthCtx.fillRect(0, 0, 128, 16);
 
-        body.addEventListener('collide', (e) => {
-            updateDebugLog(`Player collided with body at: (${e.body.position.x.toFixed(2)}, ${e.body.position.y.toFixed(2)}, ${e.body.position.z.toFixed(2)})`);
-        });
+                const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(document.createElement('canvas'))}));
+                backgroundSprite.scale.set(2, 0.25, 1);
+                backgroundSprite.position.set(0, 5, 0);
+                soldier.add(backgroundSprite);
 
-        updateDebugLog(`Player body initialized at: (${body.position.x.toFixed(2)}, ${body.position.y.toFixed(2)}, ${body.position.z.toFixed(2)})`);
+                const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(healthCanvas)}));
+                healthSprite.scale.set(2, 0.25, 1);
+                healthSprite.position.set(0, 5, 0);
+                soldier.add(healthSprite);
 
-        const mixer = new THREE.AnimationMixer(soldier);
-        const animations = gltf.animations;
-        const actions = {
-            idle: mixer.clipAction(animations[0]),
-            run: mixer.clipAction(animations[3]),
-            attack: mixer.clipAction(animations[5])
-        };
-        actions.idle.play();
+                player = {
+                    soldier, body, mixer, actions, currentAction: actions.idle, targetAngle: 0, health: 100, maxHealth: 100,
+                    isAttacking: false, attackCooldown: 0, baseAttackPower: 10, attackPowerBoost: 0, attackPowerBoostEndTime: 0,
+                    maxAttackCooldown: 0.2, healthBar: healthSprite, healthBarBackground: backgroundSprite, healthCanvas, healthCtx,
+                    lastHealTime: 0, healInterval: 1, isFlashing: false, flashDuration: 0.1, flashTimer: 0, originalMaterials,
+                    hasKey: false, faceMouseTimer: 0, shiftToggle: false, baseSoldierSpeed: 10, speedMultiplier: 1,
+                    speedPowerUpEndTime: 0, attackTriggeredByMouse: false, hasBow: true, arrowCount: 1
+                };
+                // 調試可視化
+                if (debugPhysics) 
+                {
+                    const debugMesh = createDebugMeshFromCannonShape(body, shape);
+                    sceneInfo.scene.add(debugMesh);
+                    player.debugMesh = debugMesh; // 保存以便後續更新
+                }
+            });
+            return () => player;
+        }
 
-        const healthCanvas = document.createElement('canvas');
-        healthCanvas.width = 128;
-        healthCanvas.height = 16;
-        const healthCtx = healthCanvas.getContext('2d');
-        healthCtx.fillStyle = '#00ff00';
-        healthCtx.fillRect(0, 0, 128, 16);
-
-        const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(document.createElement('canvas'))}));
-        backgroundSprite.scale.set(2, 0.25, 1);
-        backgroundSprite.position.set(0, 5, 0);
-        soldier.add(backgroundSprite);
-
-        const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(healthCanvas)}));
-        healthSprite.scale.set(2, 0.25, 1);
-        healthSprite.position.set(0, 5, 0);
-        soldier.add(healthSprite);
-
-        player = {
-            soldier, body, mixer, actions, currentAction: actions.idle, targetAngle: 0, health: 100, maxHealth: 100,
-            isAttacking: false, attackCooldown: 0, baseAttackPower: 10, attackPowerBoost: 0, attackPowerBoostEndTime: 0,
-            maxAttackCooldown: 0.2, healthBar: healthSprite, healthBarBackground: backgroundSprite, healthCanvas, healthCtx,
-            lastHealTime: 0, healInterval: 1, isFlashing: false, flashDuration: 0.1, flashTimer: 0, originalMaterials,
-            hasKey: false, faceMouseTimer: 0, shiftToggle: false, baseSoldierSpeed: 10, speedMultiplier: 1,
-            speedPowerUpEndTime: 0, attackTriggeredByMouse: false, hasBow: true, arrowCount: 1
-        };
-    });
-    return () => player;
-}
-        
         function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier) return;
 
+            sceneInfo.world.step(delta);
             player.soldier.position.copy(player.body.position);
+            player.soldier.position.y -= 1;
             player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
 
-            updateDebugLog(`Player pos: (${player.body.position.x.toFixed(2)}, ${player.body.position.y.toFixed(2)}, ${player.body.position.z.toFixed(2)})`);
-            updateDebugLog(`Player vel: (${player.body.velocity.x.toFixed(2)}, ${player.body.velocity.y.toFixed(2)}, ${player.body.velocity.z.toFixed(2)})`);
-
-            const ray = new CANNON.Ray();
-            ray.from = player.body.position.clone();
-            ray.to = player.body.position.clone().vadd(new CANNON.Vec3(0, -50, 0)); // 擴大檢測距離到 -50
-            const result = new CANNON.RaycastResult();
-            sceneInfo.world.bodies.forEach(body => ray.intersectBody(body, result));
-            if (result.hasHit) {
-                updateDebugLog(`Player raycast hit at: (${result.hitPointWorld.x.toFixed(2)}, ${result.hitPointWorld.y.toFixed(2)}, ${result.hitPointWorld.z.toFixed(2)})`);
-            } else {
-                updateDebugLog(`Player raycast missed`);
+            if (debugPhysics && player.debugMesh) {
+                player.debugMesh.position.copy(player.body.position);
+                player.debugMesh.quaternion.copy(player.body.quaternion);
             }
 
             if (player.isFlashing) {
@@ -436,6 +543,7 @@ function createObstacles(sceneInfo, gameInfo) {
                     player.soldier.traverse(child => child.isMesh && player.originalMaterials.has(child) && (child.material = player.originalMaterials.get(child).clone()));
                 }
             }
+
             const rotationSpeed = 5;
             const soldierSpeed = player.baseSoldierSpeed * player.speedMultiplier;
             const moveDirection = new THREE.Vector3();
@@ -722,94 +830,83 @@ function createObstacles(sceneInfo, gameInfo) {
                 sceneInfo.controls.target.copy(player.soldier.position);
                 sceneInfo.controls.update();
             }
-            updateDebugLog(`Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`);
-            //document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
+
+            document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
         }
 
         function spawnEnemy(sceneInfo, gameInfo, enemyInfo, maxEnemies) {
-    if (enemyInfo.enemies.length >= maxEnemies) return;
+            if (enemyInfo.enemies.length >= maxEnemies) return;
 
-    const gltfLoader = new GLTFLoader();
-    gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
-        const enemy = gltf.scene;
-        enemy.scale.set(0.5, 0.5, 0.5);
-        let spawnX, spawnZ;
-        do {
-            spawnX = Math.floor(Math.random() * gameInfo.gridSize);
-            spawnZ = Math.floor(Math.random() * gameInfo.gridSize);
-        } while (spawnX === 1 && spawnZ === 1 || gameInfo.obstacles.some(o => o.x === spawnX && o.z === spawnZ));
+            const gltfLoader = new GLTFLoader();
+            gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
+                const enemy = gltf.scene;
+                enemy.scale.set(0.5, 0.5, 0.5);
+                let spawnX, spawnZ;
+                do {
+                    spawnX = Math.floor(Math.random() * gameInfo.gridSize);
+                    spawnZ = Math.floor(Math.random() * gameInfo.gridSize);
+                } while (spawnX === 1 && spawnZ === 1 || gameInfo.obstacles.some(o => o.x === spawnX && o.z === spawnZ));
 
-        const posX = spawnX * gameInfo.cellSize + gameInfo.cellSize / 2;
-        const posZ = spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2;
-        const terrainHeight = gameInfo.heightData[spawnX][spawnZ];
-        const posY = terrainHeight + 20;
-        enemy.position.set(posX, posY, posZ);
+                const posX = spawnX * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posZ = spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posY = gameInfo.heightData[spawnX][spawnZ];
+                enemy.position.set(posX, posY, posZ);
+                enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
+                sceneInfo.scene.add(enemy);
 
-        updateDebugLog(`Enemy terrain height at (${spawnX}, ${spawnZ}): ${terrainHeight.toFixed(2)}`);
-        updateDebugLog(`Enemy initial pos: (${posX.toFixed(2)}, ${posY.toFixed(2)}, ${posZ.toFixed(2)})`);
+                const shape = new CANNON.Sphere(1);
+                const body = new CANNON.Body({mass: 5});
+                body.addShape(shape);
+                body.position.set(posX, posY + 1, posZ); // 物理體略高於地形避免嵌入
+                body.linearDamping = 0.1;
+                body.angularDamping = 0.1;
+                sceneInfo.world.addBody(body);
 
-        enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
-        sceneInfo.scene.add(enemy);
+                const mixer = new THREE.AnimationMixer(enemy);
+                const animations = gltf.animations;
+                const actions = {
+                    idle: mixer.clipAction(animations[0]),
+                    run: mixer.clipAction(animations[3]),
+                    attack: mixer.clipAction(animations[5])
+                };
+                actions.run.play();
 
-        const shape = new CANNON.Sphere(1);
-        const body = new CANNON.Body({mass: 5});
-        body.addShape(shape);
-        body.position.set(posX, posY, posZ);
-        body.linearDamping = 0;
-        body.angularDamping = 0;
-        sceneInfo.world.addBody(body);
+                const healthCanvas = document.createElement('canvas');
+                healthCanvas.width = 128;
+                healthCanvas.height = 16;
+                const healthCtx = healthCanvas.getContext('2d');
+                healthCtx.fillStyle = '#00ff00';
+                healthCtx.fillRect(0, 0, 128, 16);
 
-        body.addEventListener('collide', (e) => {
-            updateDebugLog(`Enemy collided with body at: (${e.body.position.x.toFixed(2)}, ${e.body.position.y.toFixed(2)}, ${e.body.position.z.toFixed(2)})`);
-        });
+                const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(document.createElement('canvas'))}));
+                backgroundSprite.scale.set(2, 0.25, 1);
+                backgroundSprite.position.set(0, 5, 0);
+                enemy.add(backgroundSprite);
 
-        updateDebugLog(`Enemy body initialized at: (${body.position.x.toFixed(2)}, ${body.position.y.toFixed(2)}, ${body.position.z.toFixed(2)})`);
+                const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(healthCanvas)}));
+                healthSprite.scale.set(2, 0.25, 1);
+                healthSprite.position.set(0, 5, 0);
+                enemy.add(healthSprite);
 
-        const mixer = new THREE.AnimationMixer(enemy);
-        const animations = gltf.animations;
-        const actions = {
-            idle: mixer.clipAction(animations[0]),
-            run: mixer.clipAction(animations[3]),
-            attack: mixer.clipAction(animations[5])
-        };
-        actions.run.play();
+                enemy.body = body;
+                enemy.mixer = mixer;
+                enemy.actions = actions;
+                enemy.currentAction = actions.run;
+                enemy.targetPosition = getRandomTarget(gameInfo.heightData, gameInfo.gridSize, gameInfo.cellSize);
+                enemy.health = 50;
+                enemy.maxHealth = 50;
+                enemy.isAttacking = false;
+                enemy.attackCooldown = 0;
+                enemy.healthBar = healthSprite;
+                enemy.healthBarBackground = backgroundSprite;
+                enemy.healthCanvas = healthCanvas;
+                enemy.healthCtx = healthCtx;
+                enemy.patrolTimer = 0;
+                enemyInfo.enemies.push(enemy);
+            });
+        }
 
-        const healthCanvas = document.createElement('canvas');
-        healthCanvas.width = 128;
-        healthCanvas.height = 16;
-        const healthCtx = healthCanvas.getContext('2d');
-        healthCtx.fillStyle = '#00ff00';
-        healthCtx.fillRect(0, 0, 128, 16);
-
-        const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(document.createElement('canvas'))}));
-        backgroundSprite.scale.set(2, 0.25, 1);
-        backgroundSprite.position.set(0, 5, 0);
-        enemy.add(backgroundSprite);
-
-        const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(healthCanvas)}));
-        healthSprite.scale.set(2, 0.25, 1);
-        healthSprite.position.set(0, 5, 0);
-        enemy.add(healthSprite);
-
-        enemy.body = body;
-        enemy.mixer = mixer;
-        enemy.actions = actions;
-        enemy.currentAction = actions.run;
-        enemy.targetPosition = getRandomTarget(gameInfo.heightData, gameInfo.gridSize, gameInfo.cellSize);
-        enemy.health = 50;
-        enemy.maxHealth = 50;
-        enemy.isAttacking = false;
-        enemy.attackCooldown = 0;
-        enemy.healthBar = healthSprite;
-        enemy.healthBarBackground = backgroundSprite;
-        enemy.healthCanvas = healthCanvas;
-        enemy.healthCtx = healthCtx;
-        enemy.patrolTimer = 0;
-        enemyInfo.enemies.push(enemy);
-    });
-}
-
-        function updateEnemies(enemyInfo, playerInfo, gameInfo, sceneInfo, delta, inputInfo) {
+        function updateEnemies(enemyInfo, playerInfo, gameInfo, delta, inputInfo) {
             const player = playerInfo.getPlayer();
             const idleRange = 2, attackRange = 3, patrolSpeed = 2, chaseSpeed = 5, rotationSpeed = 5, detectionRange = 15, fieldOfView = Math.PI * 2 / 3;
 
@@ -817,22 +914,7 @@ function createObstacles(sceneInfo, gameInfo) {
                 if (!enemy.mixer) return;
                 enemy.mixer.update(delta);
                 enemy.position.copy(enemy.body.position);
-
-                if (enemyInfo.enemies.indexOf(enemy) === 0) {
-                    updateDebugLog(`Enemy[0] pos: (${enemy.body.position.x.toFixed(2)}, ${enemy.body.position.y.toFixed(2)}, ${enemy.body.position.z.toFixed(2)})`);
-                    updateDebugLog(`Enemy[0] vel: (${enemy.body.velocity.x.toFixed(2)}, ${enemy.body.velocity.y.toFixed(2)}, ${enemy.body.velocity.z.toFixed(2)})`);
-
-                    const ray = new CANNON.Ray();
-                    ray.from = enemy.body.position.clone();
-                    ray.to = enemy.body.position.clone().vadd(new CANNON.Vec3(0, -50, 0)); // 擴大檢測距離到 -50
-                    const result = new CANNON.RaycastResult();
-                    sceneInfo.world.bodies.forEach(body => ray.intersectBody(body, result));
-                    if (result.hasHit) {
-                        updateDebugLog(`Enemy[0] raycast hit at: (${result.hitPointWorld.x.toFixed(2)}, ${result.hitPointWorld.y.toFixed(2)}, ${result.hitPointWorld.z.toFixed(2)})`);
-                    } else {
-                        updateDebugLog(`Enemy[0] raycast missed`);
-                    }
-                }
+                enemy.position.y -= 1;
 
                 if (enemy.attackCooldown > 0) enemy.attackCooldown -= delta;
 
@@ -945,12 +1027,13 @@ function createObstacles(sceneInfo, gameInfo) {
                 return;
             }
 
+            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
+                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
+                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
+            }
+
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
-
-            gm.sceneInfo.world.step(delta / 10); // 進一步減小步長
-
-            updateDebugLog(`Animating frame, delta: ${delta.toFixed(3)}`, false);
 
             if (time - gm.gameInfo.getLastSpawnTime() > 10) {
                 spawnEnemy(gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
@@ -958,13 +1041,14 @@ function createObstacles(sceneInfo, gameInfo) {
             }
 
             updatePlayer(gm.playerInfo, gm.inputInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, delta);
-            updateEnemies(gm.enemyInfo, gm.playerInfo, gm.gameInfo, gm.sceneInfo, delta, gm.inputInfo);
+            updateEnemies(gm.enemyInfo, gm.playerInfo, gm.gameInfo, delta, gm.inputInfo);
 
             if (gm.cameraMode === 'perspective' && gm.sceneInfo.controls) gm.sceneInfo.controls.update();
 
             gm.sceneInfo.renderer.render(gm.sceneInfo.scene, gm.sceneInfo.camera);
             requestAnimationFrame(() => animate(gm));
         }
+
         function setupEventListeners(sceneInfo, playerInfo) {
             const keys = {
                 w: false, a: false, s: false, d: false, space: false, shift: false, '1': false, '2': false, '3': false,

@@ -106,6 +106,65 @@
         const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
         const textureLoader = new THREE.TextureLoader();
 
+        const debugPhysics = true; // 設為 true 啟用物理形狀可視化
+        function createDebugMeshFromCannonShape(body, shape) {
+            let debugMesh;
+
+            if (shape instanceof CANNON.Box) {
+                const size = shape.halfExtents;
+                const geometry = new THREE.BoxGeometry(size.x * 2, size.y * 2, size.z * 2);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Sphere) {
+                const geometry = new THREE.SphereGeometry(shape.radius, 16, 16);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Plane) {
+                const geometry = new THREE.PlaneGeometry(100, 100);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Heightfield) {
+                const geometry = new THREE.BufferGeometry();
+                const vertices = [];
+                const indices = [];
+                const { elementSize } = shape;
+                const data = shape.data;
+
+                for (let x = 0; x < data.length - 1; x++) {
+                    for (let z = 0; z < data[0].length - 1; z++) {
+                        const y00 = data[x][z];
+                        const y10 = data[x + 1][z];
+                        const y01 = data[x][z + 1];
+                        const y11 = data[x + 1][z + 1];
+
+                        const xPos = x * elementSize;
+                        const zPos = z * elementSize;
+
+                        vertices.push(xPos, y00, zPos);
+                        vertices.push(xPos + elementSize, y10, zPos);
+                        vertices.push(xPos, y01, zPos + elementSize);
+                        vertices.push(xPos + elementSize, y11, zPos + elementSize);
+
+                        const base = (x * (data[0].length - 1) + z) * 4;
+                        indices.push(base, base + 1, base + 2);
+                        indices.push(base + 1, base + 3, base + 2);
+                    }
+                }
+
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setIndex(indices);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            }
+
+            if (debugMesh) {
+                debugMesh.position.copy(body.position);
+                debugMesh.quaternion.copy(body.quaternion);
+            }
+
+            return debugMesh;
+        }
+
         function getShortestAngleDifference(currentAngle, targetAngle) {
             let delta = targetAngle - currentAngle;
             delta = ((delta + Math.PI) % (2 * Math.PI)) - Math.PI;
@@ -220,6 +279,15 @@
             floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
             floorBody.position.set(floorSize / 2, 0, floorSize / 2);
             sceneInfo.world.addBody(floorBody);
+
+            gameInfo.floorBody = floorBody;
+
+            // 調試可視化
+            if (debugPhysics) {
+                const debugMesh = createDebugMeshFromCannonShape(floorBody, floorShape);
+                sceneInfo.scene.add(debugMesh);
+                gameInfo.floorDebugMesh = debugMesh; // 保存以便後續更新
+            }
         }
 
         function createWalls(sceneInfo, gameInfo) {
@@ -394,6 +462,12 @@
                     hasKey: false, faceMouseTimer: 0, shiftToggle: false, baseSoldierSpeed: 10, speedMultiplier: 1,
                     speedPowerUpEndTime: 0, attackTriggeredByMouse: false, hasBow: true, arrowCount: 1
                 };
+                if (debugPhysics) 
+                {
+                    const debugMesh = createDebugMeshFromCannonShape(body, shape);
+                    sceneInfo.scene.add(debugMesh);
+                    player.debugMesh = debugMesh; // 保存以便後續更新
+                }
             });
             return () => player;
         }
@@ -406,6 +480,11 @@
             player.soldier.position.copy(player.body.position);
             player.soldier.position.y -= 1;
             player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
+
+            if (debugPhysics && player.debugMesh) {
+                player.debugMesh.position.copy(player.body.position);
+                player.debugMesh.quaternion.copy(player.body.quaternion);
+            }
 
             if (player.isFlashing) {
                 player.flashTimer -= delta;
@@ -898,6 +977,11 @@
             if (gm.newGame) {
                 initNewLevel(gm);
                 return;
+            }
+
+            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
+                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
+                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
             }
 
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
