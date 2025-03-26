@@ -601,8 +601,8 @@
             if (player.body.position.y > terrainHeight + maxHeightAboveTerrain) {
                 player.body.position.y = terrainHeight + maxHeightAboveTerrain; // 直接校正到最大高度
                 player.body.velocity.y = 0; // 停止垂直速度
-            } else if (player.body.position.y < terrainHeight+minHeightAboveTerrain) {
-                player.body.position.y = terrainHeight+minHeightAboveTerrain; // 防止嵌入地形
+            } else if (player.body.position.y < terrainHeight + minHeightAboveTerrain) {
+                player.body.position.y = terrainHeight + minHeightAboveTerrain; // 防止嵌入地形
                 player.body.velocity.y = 0;
             }
             
@@ -899,9 +899,11 @@
 
             if (gameMaster.cameraMode === 'firstPerson') {
                 sceneInfo.camera.position.copy(player.soldier.position).add(new THREE.Vector3(0, 2, 0));
+                sceneInfo.camera.rotation.set(0, 0, 0);
                 sceneInfo.camera.rotation.y = player.soldier.rotation.y + Math.PI;
             } else if (gameMaster.cameraMode === 'topDown') {
-                sceneInfo.camera.position.set(player.soldier.position.x, 20, player.soldier.position.z);
+                const offsetY = inputInfo.cameraOffsetY(); // 動態獲取高度偏移
+                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z);
                 sceneInfo.camera.lookAt(player.soldier.position);
             } else if (sceneInfo.controls) {
                 sceneInfo.controls.target.copy(player.soldier.position);
@@ -910,7 +912,6 @@
 
             document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
         }
-
         function spawnEnemy(sceneInfo, gameInfo, enemyInfo, maxEnemies) {
             if (enemyInfo.enemies.length >= maxEnemies) return;
 
@@ -1183,7 +1184,7 @@
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
 
-            if (time - gm.gameInfo.getLastSpawnTime() > 1) {
+            if (time - gm.gameInfo.getLastSpawnTime() > 10) {
                 spawnEnemy(gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
                 gm.gameInfo.setLastSpawnTime(time);
             }
@@ -1207,6 +1208,12 @@
                 mouseLeft: false, mouseMovementX: 0, mouseMovementY: 0, joystick: {x: 0, y: 0}
             };
             const mouse = new THREE.Vector2();
+
+            // 攝影機高度偏移（用於 topDown 視角）
+            let cameraOffsetY = 20; // 初始高度偏移（與 updatePlayer 中的默認值一致）
+            const minOffsetY = 5;   // 最小高度（拉近）
+            const maxOffsetY = 100;  // 最大高度（拉遠）
+            const zoomSpeed = 1;  // 滾輪縮放速度
 
             document.querySelectorAll('#camera-buttons button').forEach(button => {
                 button.addEventListener('click', () => switchCamera(button.dataset.camera, sceneInfo));
@@ -1249,6 +1256,15 @@
 
             const mouseUpHandler = e => e.button === 0 && (keys.mouseLeft = false);
 
+            // 添加滑鼠滾輪事件監聽器
+            const wheelHandler = e => {
+                if (gameMaster.cameraMode === 'topDown') {
+                    // 根據滾輪方向調整高度偏移
+                    cameraOffsetY -= e.deltaY * zoomSpeed * 0.01; // deltaY 正值表示向下滾（拉遠），負值表示向上滾（拉近）
+                    cameraOffsetY = Math.max(minOffsetY, Math.min(maxOffsetY, cameraOffsetY)); // 限制範圍
+                }
+            };
+
             const resizeHandler = () => {
                 sceneInfo.camera.aspect = window.innerWidth / window.innerHeight;
                 sceneInfo.camera.updateProjectionMatrix();
@@ -1260,6 +1276,7 @@
             window.addEventListener('mousemove', mouseMoveHandler);
             window.addEventListener('mousedown', mouseDownHandler);
             window.addEventListener('mouseup', mouseUpHandler);
+            window.addEventListener('wheel', wheelHandler);
             window.addEventListener('resize', resizeHandler);
 
             const joystickContainer = document.getElementById('joystick-container');
@@ -1326,12 +1343,14 @@
 
             return {
                 keys, mouse,
+                cameraOffsetY: () => cameraOffsetY, // 提供方法以獲取當前高度偏移
                 removeListeners: () => {
                     window.removeEventListener('keydown', keyDownHandler);
                     window.removeEventListener('keyup', keyUpHandler);
                     window.removeEventListener('mousemove', mouseMoveHandler);
                     window.removeEventListener('mousedown', mouseDownHandler);
                     window.removeEventListener('mouseup', mouseUpHandler);
+                    window.removeEventListener('wheel', wheelHandler);
                     window.removeEventListener('resize', resizeHandler);
                     joystickContainer.removeEventListener('touchstart', handleJoystickStart);
                     joystickContainer.removeEventListener('touchmove', handleJoystickMove);
