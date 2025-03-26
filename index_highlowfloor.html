@@ -100,12 +100,73 @@
         }
     </script>
     <script type="module">
+        const debugPhysics = false; // 設為 true 啟用物理形狀可視化
+
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
         import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
         const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
+        //const ext_resource_url = '.';
         const textureLoader = new THREE.TextureLoader();
+
+        function createDebugMeshFromCannonShape(body, shape) {
+            let debugMesh;
+
+            if (shape instanceof CANNON.Box) {
+                const size = shape.halfExtents;
+                const geometry = new THREE.BoxGeometry(size.x * 2, size.y * 2, size.z * 2);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Sphere) {
+                const geometry = new THREE.SphereGeometry(shape.radius, 16, 16);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Heightfield) {
+                const geometry = new THREE.BufferGeometry();
+                const vertices = [];
+                const indices = [];
+                let { elementSize } = shape;
+                const data = shape.data;
+
+                elementSize = elementSize*1.05;
+                // 計算網格的最大寬度，用於鏡向偏移
+                const maxX = (data.length - 1) * elementSize;
+                // 使用 floor 的總尺寸和分段數計算精確的 elementSize
+                const floorSize = (data.length - 1) * elementSize; // 假設 floorSize 應與 Heightfield 總尺寸一致
+                const correctedElementSize = floorSize / (data.length - 1); // 確保與 PlaneGeometry 的間距一致
+
+                for (let x = 0; x < data.length - 1; x++) {
+                    for (let z = 0; z < data[0].length - 1; z++) {
+                        const y00 = data[x][z];
+                        const y10 = data[x + 1][z];
+                        const y01 = data[x][z + 1];
+                        const y11 = data[x + 1][z + 1];
+
+                        const xPos = x * correctedElementSize;
+                        const zPos = z * correctedElementSize;
+
+                        // 沿 X 軸鏡向：將 xPos 取反並偏移
+                        vertices.push(maxX - xPos, y00, zPos);
+                        vertices.push(maxX - (xPos + correctedElementSize), y10, zPos);
+                        vertices.push(maxX - xPos, y01, zPos + correctedElementSize);
+                        vertices.push(maxX - (xPos + correctedElementSize), y11, zPos + correctedElementSize);
+
+                        const base = (x * (data[0].length - 1) + z) * 4;
+                        indices.push(base, base + 1, base + 2);
+                        indices.push(base + 1, base + 3, base + 2);
+                    }
+                }
+
+
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setIndex(indices);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            }
+
+            return debugMesh;
+        }
 
         function getShortestAngleDifference(currentAngle, targetAngle) {
             let delta = targetAngle - currentAngle;
@@ -177,35 +238,70 @@
         function createFloor(sceneInfo, gameInfo) {
             const floorSize = gameInfo.gridSize * gameInfo.cellSize;
             const geometry = new THREE.PlaneGeometry(floorSize, floorSize, gameInfo.gridSize - 1, gameInfo.gridSize - 1);
-            geometry.rotateX(-Math.PI / 2);
-
             const heightData = gameInfo.heightData;
+            geometry.rotateX(-Math.PI / 2);
             const vertices = geometry.attributes.position.array;
             for (let i = 0, j = 0; i < vertices.length; i += 3, j++) {
                 const x = Math.floor(j / gameInfo.gridSize);
                 const z = j % gameInfo.gridSize;
-                vertices[i + 1] = heightData[x][z];
+                vertices[i + 1] = heightData[x][z]; 
             }
             geometry.computeVertexNormals();
 
-            const floorTexture = textureLoader.load(ext_resource_url + '/textures/floor.png');
+            //const floorTexture = textureLoader.load(ext_resource_url + '/textures/floor.png');
+            const floorTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
             floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
             floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
-            const floorMaterial = new THREE.MeshStandardMaterial({map: floorTexture});
+            const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
             const floor = new THREE.Mesh(geometry, floorMaterial);
             floor.position.set(floorSize / 2, 0, floorSize / 2);
             floor.receiveShadow = true;
             sceneInfo.scene.add(floor);
 
-            // 調整高度場數據以匹配 Three.js 坐標
-            const heightfieldShape = new CANNON.Heightfield(heightData, {elementSize: gameInfo.cellSize});
-            const heightfieldBody = new CANNON.Body({mass: 0});
-            heightfieldBody.addShape(heightfieldShape);
-            heightfieldBody.position.set(floorSize / 2, 0, floorSize / 2); // 與地形網格中心對齊
-            heightfieldBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
-            sceneInfo.world.addBody(heightfieldBody);
+            const heightfieldShape = new CANNON.Heightfield(heightData, { elementSize: gameInfo.cellSize });
+            var heightfieldBody = new CANNON.Body({ mass: 0 });
+            
+            // 自定義位置偏移
+            var offsetX = -floorSize / 2;
+            var offsetY = 0;
+            var offsetZ = -floorSize / 2;
+            var positionOffset = new CANNON.Vec3(offsetX, offsetY, offsetZ);
 
+            // 自定義旋轉角度（弧度）
+            var angleX = -Math.PI / 2; // 繞 X 軸旋轉角度
+            var angleY = Math.PI / 2 + Math.PI; // 繞 Y 軸旋轉角度
+            var angleZ = 0; // 繞 Z 軸旋轉角度
+
+            // 創建四元數來表示旋轉
+            var q = new CANNON.Quaternion();
+
+            var qx = new CANNON.Quaternion();
+            qx.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), angleX);
+
+            var qy = new CANNON.Quaternion();
+            qy.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angleY);
+
+            var qz = new CANNON.Quaternion();
+            qz.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), angleZ);
+
+            q = qz.mult(qy).mult(qx);
+
+            // 添加形狀到物理身體
+            heightfieldBody.addShape(heightfieldShape, positionOffset, q);
+            
+            heightfieldBody.position.set(floorSize / 2, 0, floorSize / 2);
+            sceneInfo.world.addBody(heightfieldBody);
             gameInfo.floorBody = heightfieldBody;
+            
+            // 儲存局部偏移和旋轉到 gameInfo
+            gameInfo.floorShapeOffset = positionOffset; // CANNON.Vec3
+            gameInfo.floorShapeQuaternion = q; // CANNON.Quaternion
+            
+            if (debugPhysics) {
+                const debugMesh = createDebugMeshFromCannonShape(heightfieldBody, heightfieldShape);
+                sceneInfo.scene.add(debugMesh);
+                gameInfo.floorDebugMesh = debugMesh;
+            }
         }
 
         function createObstacles(sceneInfo, gameInfo) {
@@ -316,11 +412,11 @@
                 const shape = new CANNON.Sphere(1);
                 const body = new CANNON.Body({mass: 5});
                 body.addShape(shape);
-                body.position.set(posX, posY + 1, posZ); // 物理體略高於地形避免嵌入
+                body.position.set(posX, posY + 10, posZ); // 物理體略高於地形避免嵌入
                 body.linearDamping = 0.1;
                 body.angularDamping = 0.1;
                 sceneInfo.world.addBody(body);
-
+                
                 const mixer = new THREE.AnimationMixer(soldier);
                 const animations = gltf.animations;
                 const actions = {
@@ -355,6 +451,13 @@
                     hasKey: false, faceMouseTimer: 0, shiftToggle: false, baseSoldierSpeed: 10, speedMultiplier: 1,
                     speedPowerUpEndTime: 0, attackTriggeredByMouse: false, hasBow: true, arrowCount: 1
                 };
+                // 調試可視化
+                if (debugPhysics) 
+                {
+                    const debugMesh = createDebugMeshFromCannonShape(body, shape);
+                    sceneInfo.scene.add(debugMesh);
+                    player.debugMesh = debugMesh; // 保存以便後續更新
+                }
             });
             return () => player;
         }
@@ -367,6 +470,11 @@
             player.soldier.position.copy(player.body.position);
             player.soldier.position.y -= 1;
             player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
+
+            if (debugPhysics && player.debugMesh) {
+                player.debugMesh.position.copy(player.body.position);
+                player.debugMesh.quaternion.copy(player.body.quaternion);
+            }
 
             if (player.isFlashing) {
                 player.flashTimer -= delta;
@@ -859,6 +967,70 @@
             if (gm.newGame) {
                 initNewLevel(gm);
                 return;
+            }
+            /*
+            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
+                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
+                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
+            }
+            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
+                // 轉換 CANNON 到 THREE 的坐標
+                const bodyPos = gm.gameInfo.floorBody.position;
+                const bodyQuat = gm.gameInfo.floorBody.quaternion;
+                const shapeOffset = gm.gameInfo.floorShapeOffset;
+                const shapeQuat = gm.gameInfo.floorShapeQuaternion;
+
+                // 設置 debugMesh 的位置和旋轉
+                const threePos = new THREE.Vector3(bodyPos.x, bodyPos.y, bodyPos.z);
+                const threeQuat = new THREE.Quaternion(bodyQuat.x, bodyQuat.y, bodyQuat.z, bodyQuat.w);
+                const threeShapeOffset = new THREE.Vector3(shapeOffset.x, shapeOffset.y, shapeOffset.z);
+                const threeShapeQuat = new THREE.Quaternion(shapeQuat.x, shapeQuat.y, shapeQuat.z, shapeQuat.w);
+
+                // 先應用 body 的位置和旋轉
+                gm.gameInfo.floorDebugMesh.position.copy(threePos);
+                gm.gameInfo.floorDebugMesh.quaternion.copy(threeQuat);
+
+                // 再疊加 shape 的局部偏移和旋轉
+                // 位置：將局部偏移旋轉後加到總位置上
+                threeShapeOffset.applyQuaternion(threeQuat); // 根據 body 的旋轉調整偏移
+                gm.gameInfo.floorDebugMesh.position.add(threeShapeOffset);
+
+                // 旋轉：將 shape 的旋轉疊加到 body 的旋轉上
+                gm.gameInfo.floorDebugMesh.quaternion.multiply(threeShapeQuat);
+            }*/
+
+            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
+                const floorSize = gm.gameInfo.gridSize * gm.gameInfo.cellSize;
+                // 複製位置並增加偏移
+                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
+                gm.gameInfo.floorDebugMesh.position.x -= floorSize/2;  // 位置 X 偏移
+                gm.gameInfo.floorDebugMesh.position.y += 0;  // 位置 Y 偏移
+                gm.gameInfo.floorDebugMesh.position.z += floorSize/2;  // 位置 Z 偏移
+
+                // 複製旋轉並增加角度偏移（使用歐拉角）
+                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
+
+                // 繞 X 軸旋轉 180 度
+                const qX = new CANNON.Quaternion();
+                qX.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), 0);
+
+                // 繞 Y 軸旋轉 180 度
+                const qY = new CANNON.Quaternion();
+                qY.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI/2 +Math.PI/2+Math.PI/2);
+
+                // 繞 Z 軸旋轉 180 度
+                const qZ = new CANNON.Quaternion();
+                qZ.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), 0);
+
+                // 組合旋轉：先繞 X 軸，再繞 Z 軸
+                gm.gameInfo.floorDebugMesh.quaternion.copy(qZ.mult(qY).mult(qX));
+
+                // 如果需要角度偏移，可以轉換為歐拉角進行調整
+                const euler = new THREE.Euler().setFromQuaternion(gm.gameInfo.floorBody.quaternion);
+                euler.x += 0;  // 角度 X 偏移（弧度）
+                euler.y += 30;  // 角度 Y 偏移（弧度）
+                euler.z += 0;  // 角度 Z 偏移（弧度）
+                //gm.gameInfo.floorDebugMesh.quaternion.setFromEuler(euler);
             }
 
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);

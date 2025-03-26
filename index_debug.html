@@ -307,13 +307,12 @@
             }
             */
 
-
-        //这里是生成高度场的代码
         /*
+        //这里是生成高度场的代码
         var matrix = [];//创建构造高度场的数组
-        for (var i = 0; i < floorSize*10; i++) {
+        for (var i = 0; i < floorSize; i++) {
             matrix.push([]);
-            for (var j = 0; j < floorSize*10; j++) {
+            for (var j = 0; j < floorSize; j++) {
                 //高度由两个余弦函数叠加形成
                 var height = Math.cos(i / floorSize * Math.PI * 8) * Math.cos(j / floorSize * Math.PI * 8);
                 matrix[i].push(height)
@@ -321,27 +320,75 @@
         }
         */
         
-        
+        /*
         const simplex = new SimplexNoise();
         var matrix = [];//创建构造高度场的数组
-        for (var i = 0; i < floorSize*gameInfo.cellSize; i++) {
+        for (var i = 0; i < floorSize; i++) {
             matrix.push([]);
-            for (var j = 0; j < floorSize*gameInfo.cellSize; j++) {
+            for (var j = 0; j < floorSize; j++) {
                 //高度由两个余弦函数叠加形成
                 const noiseValue = simplex.noise2D(i / 20, j / 20);
                 var height = (noiseValue + 1) * 5;
                 matrix[i].push(height)
             }
         }
-        
+        */
+        /*
+        const simplex = new SimplexNoise();
+        var matrix = [];//创建构造高度场的数组
+        for (var i = 0; i < floorSize*1; i++) {
+            matrix.push([]);
+            for (var j = 0; j < floorSize*1; j++) {
+                //高度由两个余弦函数叠加形成
+                const noiseValue = simplex.noise2D(i / 20, j / 20);
+                var height = (noiseValue + 1) * 1;
+                matrix[i].push(height)
+            }
+        }
+        */
 
-        const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, {elementSize: gameInfo.cellSize })
-        ///var heightfieldShape = new CANNON.Heightfield(matrix, { elementSize: 1 });
+        const heightfieldShape = new CANNON.Heightfield(heightData, {elementSize: gameInfo.cellSize })
+        ///const heightfieldShape = new CANNON.Heightfield(mirroredHeightData, {elementSize: 1 })
+        //var heightfieldShape = new CANNON.Heightfield(matrix, { elementSize: 1 });
         //var hfBody = new CANNON.Body({ mass: 0, material: physicsMaterial});
         var heightfieldBody = new CANNON.Body({ mass: 0});
+        
+        //var q = new CANNON.Quaternion();
+        //q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), - Math.PI / 2);
+        //heightfieldBody.addShape(heightfieldShape, new CANNON.Vec3(-floorSize / 2, 0, floorSize / 2), q);//由于这个高度场是XOY平面第一象限上，所以需要旋转和平移，addShape方法为我们提供了这个功能。
+        //var heightfieldBody = new CANNON.Body({ mass: 0 });
+
+        // 自定義位置偏移
+        var offsetX = -floorSize / 2; // X 軸位置偏移
+        var offsetY = 0;             // Y 軸位置偏移
+        var offsetZ = -floorSize / 2; // Z 軸位置偏移
+        var positionOffset = new CANNON.Vec3(offsetX, offsetY, offsetZ);
+
+        // 自定義旋轉角度（弧度）
+        var angleX = -Math.PI / 2; // 繞 X 軸旋轉角度
+        var angleY = Math.PI / 2+Math.PI;            // 繞 Y 軸旋轉角度
+        var angleZ = 0;            // 繞 Z 軸旋轉角度
+
+        // 創建四元數來表示旋轉
         var q = new CANNON.Quaternion();
-        q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), - Math.PI / 2);
-        heightfieldBody.addShape(heightfieldShape, new CANNON.Vec3(-floorSize / 2, 0, floorSize / 2), q);//由于这个高度场是XOY平面第一象限上，所以需要旋转和平移，addShape方法为我们提供了这个功能。
+
+        // 依次應用 X、Y、Z 軸的旋轉
+        var qx = new CANNON.Quaternion();
+        qx.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), angleX); // X 軸旋轉
+
+        var qy = new CANNON.Quaternion();
+        qy.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angleY); // Y 軸旋轉
+
+        var qz = new CANNON.Quaternion();
+        qz.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), angleZ); // Z 軸旋轉
+
+        // 將旋轉按順序合併（注意順序影響結果，這裡是 Z -> Y -> X）
+        q = qz.mult(qy).mult(qx);
+
+        // 添加形狀到物理身體
+        heightfieldBody.addShape(heightfieldShape, positionOffset, q);
+        
+        heightfieldBody.position.set(floorSize / 2, 0, floorSize / 2); // 與地形網格中心對齊
         sceneInfo.world.addBody(heightfieldBody);
         gameInfo.floorBody = heightfieldBody;
         
@@ -1032,6 +1079,41 @@
                 gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
             }
 
+/*
+            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
+                const floorSize = gm.gameInfo.gridSize * gm.gameInfo.cellSize;
+                // 複製位置並增加偏移
+                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
+                gm.gameInfo.floorDebugMesh.position.x -= floorSize/2;  // 位置 X 偏移
+                gm.gameInfo.floorDebugMesh.position.y += 0;  // 位置 Y 偏移
+                gm.gameInfo.floorDebugMesh.position.z -= floorSize/2;  // 位置 Z 偏移
+
+                // 複製旋轉並增加角度偏移（使用歐拉角）
+                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
+
+                // 繞 X 軸旋轉 180 度
+                const qX = new CANNON.Quaternion();
+                qX.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), 0);
+
+                // 繞 Y 軸旋轉 180 度
+                const qY = new CANNON.Quaternion();
+                qY.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI/2);
+
+                // 繞 Z 軸旋轉 180 度
+                const qZ = new CANNON.Quaternion();
+                qZ.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), 0);
+
+                // 組合旋轉：先繞 X 軸，再繞 Z 軸
+                gm.gameInfo.floorDebugMesh.quaternion.copy(qZ.mult(qY).mult(qX));
+
+                // 如果需要角度偏移，可以轉換為歐拉角進行調整
+                const euler = new THREE.Euler().setFromQuaternion(gm.gameInfo.floorBody.quaternion);
+                euler.x += 0;  // 角度 X 偏移（弧度）
+                euler.y += 30;  // 角度 Y 偏移（弧度）
+                euler.z += 0;  // 角度 Z 偏移（弧度）
+                //gm.gameInfo.floorDebugMesh.quaternion.setFromEuler(euler);
+            }
+*/
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
 
