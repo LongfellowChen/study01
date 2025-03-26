@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Wild World Game Demo</title>
+    <title>3D Maze Game Demo</title>
     <style>
         body, html {
             margin: 0;
@@ -90,7 +90,6 @@
     <button id="attack-button">Attack</button>
     <div id="debug"></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
     <script type="importmap">
         {
             "imports": {
@@ -100,16 +99,14 @@
         }
     </script>
     <script type="module">
-        const debugPhysics = false; // 設為 true 啟用物理形狀可視化
-
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
         import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
         const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
-        //const ext_resource_url = '.';
         const textureLoader = new THREE.TextureLoader();
 
+        const debugPhysics = false; // 設為 true 啟用物理形狀可視化
         function createDebugMeshFromCannonShape(body, shape) {
             let debugMesh;
 
@@ -122,47 +119,15 @@
                 const geometry = new THREE.SphereGeometry(shape.radius, 16, 16);
                 const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
                 debugMesh = new THREE.Mesh(geometry, material);
-            } else if (shape instanceof CANNON.Heightfield) {
-                const geometry = new THREE.BufferGeometry();
-                const vertices = [];
-                const indices = [];
-                let { elementSize } = shape;
-                const data = shape.data;
-
-                elementSize = elementSize*1.05;
-                // 計算網格的最大寬度，用於鏡向偏移
-                const maxX = (data.length - 1) * elementSize;
-                // 使用 floor 的總尺寸和分段數計算精確的 elementSize
-                const floorSize = (data.length - 1) * elementSize; // 假設 floorSize 應與 Heightfield 總尺寸一致
-                const correctedElementSize = floorSize / (data.length - 1); // 確保與 PlaneGeometry 的間距一致
-
-                for (let x = 0; x < data.length - 1; x++) {
-                    for (let z = 0; z < data[0].length - 1; z++) {
-                        const y00 = data[x][z];
-                        const y10 = data[x + 1][z];
-                        const y01 = data[x][z + 1];
-                        const y11 = data[x + 1][z + 1];
-
-                        const xPos = x * correctedElementSize;
-                        const zPos = z * correctedElementSize;
-
-                        // 沿 X 軸鏡向：將 xPos 取反並偏移
-                        vertices.push(maxX - xPos, y00, zPos);
-                        vertices.push(maxX - (xPos + correctedElementSize), y10, zPos);
-                        vertices.push(maxX - xPos, y01, zPos + correctedElementSize);
-                        vertices.push(maxX - (xPos + correctedElementSize), y11, zPos + correctedElementSize);
-
-                        const base = (x * (data[0].length - 1) + z) * 4;
-                        indices.push(base, base + 1, base + 2);
-                        indices.push(base + 1, base + 3, base + 2);
-                    }
-                }
-
-
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                geometry.setIndex(indices);
+            } else if (shape instanceof CANNON.Plane) {
+                const geometry = new THREE.PlaneGeometry(100, 100);
                 const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
                 debugMesh = new THREE.Mesh(geometry, material);
+            }
+
+            if (debugMesh) {
+                debugMesh.position.copy(body.position);
+                debugMesh.quaternion.copy(body.quaternion);
             }
 
             return debugMesh;
@@ -174,30 +139,57 @@
             return delta;
         }
 
-        function generateTerrain(gridSize, cellSize, obstacleProbability = 0.2, treasureProbability = 0.1) {
-            const simplex = new SimplexNoise();
-            const heightData = Array(gridSize).fill().map(() => Array(gridSize).fill(0));
+        function generateMaze(gridSize, cellSize, removeWallPercentage = 0.8, obstacleProbability = 0.2, treasureProbability = 0.1) {
+            const maze = Array(gridSize).fill().map(() => Array(gridSize).fill(1));
             const obstacles = [];
             const treasures = [];
 
-            for (let x = 0; x < gridSize; x++) {
-                for (let z = 0; z < gridSize; z++) {
-                    const noiseValue = simplex.noise2D(x / 20, z / 20);
-                    heightData[x][z] = (noiseValue + 1) * 5;
+            const random = (array) => Array.isArray(array) ? array[Math.floor(Math.random() * array.length)] : Math.random();
+
+            function getUnvisitedNeighbors(x, y) {
+                const neighbors = [];
+                const directions = [{dx: 0, dy: -2}, {dx: 0, dy: 2}, {dx: -2, dy: 0}, {dx: 2, dy: 0}];
+                for (const dir of directions) {
+                    const nx = x + dir.dx, ny = y + dir.dy;
+                    if (nx > 0 && nx < gridSize - 1 && ny > 0 && ny < gridSize - 1 && maze[nx][ny] === 1) {
+                        neighbors.push({x: nx, y: ny});
+                    }
+                }
+                return neighbors;
+            }
+
+            function removeWall(x1, y1, x2, y2) {
+                const wx = (x1 + x2) / 2, wy = (y1 + y2) / 2;
+                maze[wy][wx] = 0;
+            }
+
+            const stack = [{x: 1, y: 1}];
+            maze[1][1] = 0;
+
+            while (stack.length) {
+                const current = stack[stack.length - 1];
+                const neighbors = getUnvisitedNeighbors(current.x, current.y);
+                if (neighbors.length) {
+                    const next = random(neighbors);
+                    removeWall(current.x, current.y, next.x, next.y);
+                    maze[next.x][next.y] = 0;
+                    stack.push(next);
+                } else {
+                    stack.pop();
                 }
             }
 
-            for (let x = 1; x < gridSize - 1; x++) {
-                for (let z = 1; z < gridSize - 1; z++) {
-                    if (Math.random() < obstacleProbability && !(x === 1 && z === 1)) {
-                        obstacles.push({x, z, durability: Math.floor(Math.random() * 3) + 1});
-                    } else if (Math.random() < treasureProbability && !(x === 1 && z === 1)) {
-                        treasures.push({x, z, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+            for (let y = 1; y < gridSize - 1; y++) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    if (maze[x][y] === 1 && random() < removeWallPercentage) maze[x][y] = 0;
+                    else if (maze[x][y] === 0 && !(x === 1 && y === 1)) {
+                        if (random() < obstacleProbability) obstacles.push({x, z: y, durability: Math.floor(random() * 3) + 1});
+                        else if (random() < treasureProbability) treasures.push({x, z: y, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
                     }
                 }
             }
 
-            return {heightData, obstacles, treasures};
+            return {maze, obstacles, treasures};
         }
 
         function setupScene() {
@@ -236,72 +228,66 @@
         }
 
         function createFloor(sceneInfo, gameInfo) {
-            const floorSize = gameInfo.gridSize * gameInfo.cellSize;
-            const geometry = new THREE.PlaneGeometry(floorSize, floorSize, gameInfo.gridSize - 1, gameInfo.gridSize - 1);
-            const heightData = gameInfo.heightData;
-            geometry.rotateX(-Math.PI / 2);
-            const vertices = geometry.attributes.position.array;
-            for (let i = 0, j = 0; i < vertices.length; i += 3, j++) {
-                const x = Math.floor(j / gameInfo.gridSize);
-                const z = j % gameInfo.gridSize;
-                vertices[i + 1] = heightData[x][z]; 
-            }
-            geometry.computeVertexNormals();
-
-            //const floorTexture = textureLoader.load(ext_resource_url + '/textures/floor.png');
-            const floorTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
+            const floorTexture = textureLoader.load(ext_resource_url + '/textures/floor.png');
             floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
-            floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
-            const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
-            const floor = new THREE.Mesh(geometry, floorMaterial);
+            floorTexture.repeat.set(1, 1);
+
+            const floorSize = gameInfo.gridSize * gameInfo.cellSize;
+            const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
+            const floorMaterial = new THREE.MeshStandardMaterial({map: floorTexture});
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2;
             floor.position.set(floorSize / 2, 0, floorSize / 2);
             floor.receiveShadow = true;
             sceneInfo.scene.add(floor);
 
-            const heightfieldShape = new CANNON.Heightfield(heightData, { elementSize: gameInfo.cellSize });
-            var heightfieldBody = new CANNON.Body({ mass: 0 });
-            
-            // 自定義位置偏移
-            var offsetX = -floorSize / 2;
-            var offsetY = 0;
-            var offsetZ = -floorSize / 2;
-            var positionOffset = new CANNON.Vec3(offsetX, offsetY, offsetZ);
+            const floorShape = new CANNON.Plane();
+            const floorBody = new CANNON.Body({mass: 0});
+            floorBody.addShape(floorShape);
+            floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+            floorBody.position.set(floorSize / 2, 0, floorSize / 2);
+            sceneInfo.world.addBody(floorBody);
 
-            // 自定義旋轉角度（弧度）
-            var angleX = -Math.PI / 2; // 繞 X 軸旋轉角度
-            var angleY = Math.PI / 2 + Math.PI; // 繞 Y 軸旋轉角度
-            var angleZ = 0; // 繞 Z 軸旋轉角度
+            gameInfo.floorBody = floorBody;
 
-            // 創建四元數來表示旋轉
-            var q = new CANNON.Quaternion();
-
-            var qx = new CANNON.Quaternion();
-            qx.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), angleX);
-
-            var qy = new CANNON.Quaternion();
-            qy.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angleY);
-
-            var qz = new CANNON.Quaternion();
-            qz.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), angleZ);
-
-            q = qz.mult(qy).mult(qx);
-
-            // 添加形狀到物理身體
-            heightfieldBody.addShape(heightfieldShape, positionOffset, q);
-            
-            heightfieldBody.position.set(floorSize / 2, 0, floorSize / 2);
-            sceneInfo.world.addBody(heightfieldBody);
-            gameInfo.floorBody = heightfieldBody;
-            
-            // 儲存局部偏移和旋轉到 gameInfo
-            gameInfo.floorShapeOffset = positionOffset; // CANNON.Vec3
-            gameInfo.floorShapeQuaternion = q; // CANNON.Quaternion
-            
+            // 調試可視化
             if (debugPhysics) {
-                const debugMesh = createDebugMeshFromCannonShape(heightfieldBody, heightfieldShape);
+                const debugMesh = createDebugMeshFromCannonShape(floorBody, floorShape);
                 sceneInfo.scene.add(debugMesh);
-                gameInfo.floorDebugMesh = debugMesh;
+                gameInfo.floorDebugMesh = debugMesh; // 保存以便後續更新
             }
+        }
+
+        function createWalls(sceneInfo, gameInfo) {
+            const wallTexture = textureLoader.load(ext_resource_url + '/textures/wall.png');
+            wallTexture.wrapS = wallTexture.wrapT = THREE.RepeatWrapping;
+            wallTexture.repeat.set(1, 1);
+
+            const wallGeometry = new THREE.BoxGeometry(gameInfo.cellSize, gameInfo.cellSize, gameInfo.cellSize);
+            const wallMaterial = new THREE.MeshStandardMaterial({map: wallTexture});
+            const wallBodies = [];
+
+            for (let i = 0; i < gameInfo.maze.length; i++) {
+                for (let j = 0; j < gameInfo.maze[i].length; j++) {
+                    if (gameInfo.maze[i][j] === 1) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        const posX = i * gameInfo.cellSize + gameInfo.cellSize / 2;
+                        const posY = gameInfo.cellSize / 2;
+                        const posZ = j * gameInfo.cellSize + gameInfo.cellSize / 2;
+                        wall.position.set(posX, posY, posZ);
+                        wall.castShadow = wall.receiveShadow = true;
+                        sceneInfo.scene.add(wall);
+
+                        const wallShape = new CANNON.Box(new CANNON.Vec3(gameInfo.cellSize / 2, gameInfo.cellSize / 2, gameInfo.cellSize / 2));
+                        const wallBody = new CANNON.Body({mass: 0});
+                        wallBody.addShape(wallShape);
+                        wallBody.position.set(posX, posY, posZ);
+                        sceneInfo.world.addBody(wallBody);
+                        wallBodies.push(wallBody);
+                    }
+                }
+            }
+            return wallBodies;
         }
 
         function createObstacles(sceneInfo, gameInfo) {
@@ -321,8 +307,8 @@
                 const material = new THREE.MeshStandardMaterial({map: obstacleTexture});
                 const mesh = new THREE.Mesh(obstacleGeometry, material);
                 const posX = obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posY = gameInfo.cellSize / 4;
                 const posZ = obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posY = gameInfo.heightData[obstacle.x][obstacle.z] + gameInfo.cellSize / 4;
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
                 mesh.userData = {
@@ -378,10 +364,7 @@
             gameInfo.treasures.forEach(treasure => {
                 const material = new THREE.MeshStandardMaterial({map: treasureTextures[treasure.type]});
                 const mesh = new THREE.Mesh(geometry, material);
-                const posX = treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posZ = treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posY = gameInfo.heightData[treasure.x][treasure.z] + gameInfo.cellSize / 4;
-                mesh.position.set(posX, posY, posZ);
+                mesh.position.set(treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2, gameInfo.cellSize / 4, treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2);
                 mesh.castShadow = mesh.receiveShadow = true;
                 sceneInfo.scene.add(mesh);
                 gameInfo.treasureMeshes.set(treasure, mesh);
@@ -394,11 +377,7 @@
             gltfLoader.load(ext_resource_url + '/3d_module/RobotExpressive.glb', (gltf) => {
                 const soldier = gltf.scene;
                 soldier.scale.set(0.5, 0.5, 0.5);
-                const startX = 1, startZ = 1; // 初始格子位置
-                const posX = startX * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
-                const posZ = startZ * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
-                const posY = gameMaster.gameInfo.heightData[startX][startZ]; // 根據地形高度設置
-                soldier.position.set(posX, posY, posZ);
+                soldier.position.set(6, 0, 6);
 
                 const originalMaterials = new Map();
                 soldier.traverse(child => {
@@ -412,11 +391,11 @@
                 const shape = new CANNON.Sphere(1);
                 const body = new CANNON.Body({mass: 5});
                 body.addShape(shape);
-                body.position.set(posX, posY + 10, posZ); // 物理體略高於地形避免嵌入
+                body.position.set(6, 1, 6);
                 body.linearDamping = 0.1;
                 body.angularDamping = 0.1;
                 sceneInfo.world.addBody(body);
-                
+
                 const mixer = new THREE.AnimationMixer(soldier);
                 const animations = gltf.animations;
                 const actions = {
@@ -451,7 +430,6 @@
                     hasKey: false, faceMouseTimer: 0, shiftToggle: false, baseSoldierSpeed: 10, speedMultiplier: 1,
                     speedPowerUpEndTime: 0, attackTriggeredByMouse: false, hasBow: true, arrowCount: 1
                 };
-                // 調試可視化
                 if (debugPhysics) 
                 {
                     const debugMesh = createDebugMeshFromCannonShape(body, shape);
@@ -564,7 +542,7 @@
                 player.faceMouseTimer -= delta;
                 const raycaster = new THREE.Raycaster();
                 raycaster.setFromCamera(inputInfo.mouse, sceneInfo.camera);
-                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -player.soldier.position.y);
+                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
                 const intersect = new THREE.Vector3();
                 raycaster.ray.intersectPlane(plane, intersect);
                 const direction = intersect.sub(player.soldier.position).normalize();
@@ -634,7 +612,7 @@
                             if (obstacle.userData.health <= 0) {
                                 if (obstacle.userData.hidesKey) gameInfo.key.visible = true;
                                 if (obstacle.userData.hidesDoor) gameInfo.door.visible = true;
-                                sceneInfo.objectsToRemove.push({mesh: obstacle, body: target, obstacleIdx});
+                                sceneInfo.objectsToRemove.push({mesh: obstacle, body: target, obstacleIdx: obstacleIdx});
                             }
                         }
                     });
@@ -787,19 +765,17 @@
                 do {
                     spawnX = Math.floor(Math.random() * gameInfo.gridSize);
                     spawnZ = Math.floor(Math.random() * gameInfo.gridSize);
-                } while (spawnX === 1 && spawnZ === 1 || gameInfo.obstacles.some(o => o.x === spawnX && o.z === spawnZ));
+                } while (spawnX === 1 && spawnZ === 1 || gameInfo.maze[spawnZ][spawnX] !== 0 || gameInfo.obstacles.some(o => o.x === spawnX && o.z === spawnZ));
 
-                const posX = spawnX * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posZ = spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posY = gameInfo.heightData[spawnX][spawnZ];
-                enemy.position.set(posX, posY, posZ);
+                enemy.position.set(spawnX * gameInfo.cellSize + gameInfo.cellSize / 2, 0, spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2);
                 enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
                 sceneInfo.scene.add(enemy);
 
                 const shape = new CANNON.Sphere(1);
                 const body = new CANNON.Body({mass: 5});
                 body.addShape(shape);
-                body.position.set(posX, posY + 1, posZ); // 物理體略高於地形避免嵌入
+                body.position.copy(enemy.position);
+                body.position.y = 1;
                 body.linearDamping = 0.1;
                 body.angularDamping = 0.1;
                 sceneInfo.world.addBody(body);
@@ -811,7 +787,7 @@
                     run: mixer.clipAction(animations[3]),
                     attack: mixer.clipAction(animations[5])
                 };
-                actions.run.play();
+                actions.idle.play();
 
                 const healthCanvas = document.createElement('canvas');
                 healthCanvas.width = 128;
@@ -833,8 +809,8 @@
                 enemy.body = body;
                 enemy.mixer = mixer;
                 enemy.actions = actions;
-                enemy.currentAction = actions.run;
-                enemy.targetPosition = getRandomTarget(gameInfo.heightData, gameInfo.gridSize, gameInfo.cellSize);
+                enemy.currentAction = actions.idle;
+                enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
                 enemy.health = 50;
                 enemy.maxHealth = 50;
                 enemy.isAttacking = false;
@@ -843,7 +819,6 @@
                 enemy.healthBarBackground = backgroundSprite;
                 enemy.healthCanvas = healthCanvas;
                 enemy.healthCtx = healthCtx;
-                enemy.patrolTimer = 0;
                 enemyInfo.enemies.push(enemy);
             });
         }
@@ -877,7 +852,7 @@
 
                     setTimeout(() => {
                         enemy.isAttacking = false;
-                        if (canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && enemy.currentAction !== enemy.actions.run) {
+                        if (canSeePlayer(enemy, player.soldier, gameInfo.wallBodies, fieldOfView) && enemy.currentAction !== enemy.actions.run) {
                             enemy.currentAction.fadeOut(0.2);
                             enemy.actions.run.reset().fadeIn(0.2).play();
                             enemy.currentAction = enemy.actions.run;
@@ -895,7 +870,7 @@
                             enemy.currentAction = enemy.actions.idle;
                         }
                         enemy.body.velocity.set(0, enemy.body.velocity.y, 0);
-                    } else if (player && canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
+                    } else if (player && canSeePlayer(enemy, player.soldier, gameInfo.wallBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
                         enemy.targetPosition = player.soldier.position.clone();
                         enemy.isChasing = true;
                         const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
@@ -908,18 +883,21 @@
                         }
                     } else {
                         enemy.isChasing = false;
-                        enemy.patrolTimer -= delta;
-                        if (enemy.patrolTimer <= 0 || enemy.position.distanceTo(enemy.targetPosition) < 1) {
-                            enemy.targetPosition = getRandomTarget(gameInfo.heightData, gameInfo.gridSize, gameInfo.cellSize);
-                            enemy.patrolTimer = 5;
+                        if (!enemy.targetPosition || enemy.position.distanceTo(enemy.targetPosition) < 1) {
+                            enemy.targetPosition = getRandomTarget(gameInfo.maze, gameInfo.gridSize, gameInfo.cellSize);
                         }
                         const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
                         enemy.rotation.y += getShortestAngleDifference(enemy.rotation.y, Math.atan2(direction.x, direction.z)) * rotationSpeed * delta;
                         enemy.body.velocity.set(direction.x * patrolSpeed, enemy.body.velocity.y, direction.z * patrolSpeed);
-                        if (enemy.currentAction !== enemy.actions.run) {
+                        if (enemy.currentAction !== enemy.actions.run && enemy.position.distanceTo(enemy.targetPosition) > 0.5) {
                             enemy.currentAction.fadeOut(0.2);
                             enemy.actions.run.reset().fadeIn(0.2).play();
                             enemy.currentAction = enemy.actions.run;
+                        } else if (enemy.currentAction !== enemy.actions.idle) {
+                            enemy.currentAction.fadeOut(0.2);
+                            enemy.actions.idle.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.actions.idle;
+                            enemy.body.velocity.set(0, enemy.body.velocity.y, 0);
                         }
                     }
                 }
@@ -932,7 +910,7 @@
             });
         }
 
-        function canSeePlayer(enemy, playerSoldier, obstacleBodies, fieldOfView) {
+        function canSeePlayer(enemy, playerSoldier, wallBodies, fieldOfView) {
             if (!playerSoldier) return false;
 
             const enemyToPlayer = playerSoldier.position.clone().sub(enemy.position);
@@ -949,18 +927,18 @@
             ray.to = new CANNON.Vec3(playerSoldier.position.x, playerSoldier.position.y, playerSoldier.position.z);
 
             const result = new CANNON.RaycastResult();
-            ray.intersectBodies(obstacleBodies, result);
+            ray.intersectBodies(wallBodies, result);
 
             return !result.hasHit || result.distance > distance;
         }
 
-        function getRandomTarget(heightData, gridSize, cellSize) {
-            const targetX = Math.floor(Math.random() * gridSize);
-            const targetZ = Math.floor(Math.random() * gridSize);
-            const posX = targetX * cellSize + cellSize / 2;
-            const posZ = targetZ * cellSize + cellSize / 2;
-            const posY = heightData[targetX][targetZ];
-            return new THREE.Vector3(posX, posY, posZ);
+        function getRandomTarget(maze, gridSize, cellSize) {
+            let targetX, targetZ;
+            do {
+                targetX = Math.floor(Math.random() * gridSize);
+                targetZ = Math.floor(Math.random() * gridSize);
+            } while (maze[targetX][targetZ] === 1);
+            return new THREE.Vector3(targetX * cellSize + cellSize / 2, 0, targetZ * cellSize + cellSize / 2);
         }
 
         function animate(gm) {
@@ -968,69 +946,10 @@
                 initNewLevel(gm);
                 return;
             }
-            /*
+
             if (debugPhysics && gm.gameInfo.floorDebugMesh) {
                 gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
                 gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
-            }
-            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
-                // 轉換 CANNON 到 THREE 的坐標
-                const bodyPos = gm.gameInfo.floorBody.position;
-                const bodyQuat = gm.gameInfo.floorBody.quaternion;
-                const shapeOffset = gm.gameInfo.floorShapeOffset;
-                const shapeQuat = gm.gameInfo.floorShapeQuaternion;
-
-                // 設置 debugMesh 的位置和旋轉
-                const threePos = new THREE.Vector3(bodyPos.x, bodyPos.y, bodyPos.z);
-                const threeQuat = new THREE.Quaternion(bodyQuat.x, bodyQuat.y, bodyQuat.z, bodyQuat.w);
-                const threeShapeOffset = new THREE.Vector3(shapeOffset.x, shapeOffset.y, shapeOffset.z);
-                const threeShapeQuat = new THREE.Quaternion(shapeQuat.x, shapeQuat.y, shapeQuat.z, shapeQuat.w);
-
-                // 先應用 body 的位置和旋轉
-                gm.gameInfo.floorDebugMesh.position.copy(threePos);
-                gm.gameInfo.floorDebugMesh.quaternion.copy(threeQuat);
-
-                // 再疊加 shape 的局部偏移和旋轉
-                // 位置：將局部偏移旋轉後加到總位置上
-                threeShapeOffset.applyQuaternion(threeQuat); // 根據 body 的旋轉調整偏移
-                gm.gameInfo.floorDebugMesh.position.add(threeShapeOffset);
-
-                // 旋轉：將 shape 的旋轉疊加到 body 的旋轉上
-                gm.gameInfo.floorDebugMesh.quaternion.multiply(threeShapeQuat);
-            }*/
-
-            if (debugPhysics && gm.gameInfo.floorDebugMesh) {
-                const floorSize = gm.gameInfo.gridSize * gm.gameInfo.cellSize;
-                // 複製位置並增加偏移
-                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
-                gm.gameInfo.floorDebugMesh.position.x -= floorSize/2;  // 位置 X 偏移
-                gm.gameInfo.floorDebugMesh.position.y += 0;  // 位置 Y 偏移
-                gm.gameInfo.floorDebugMesh.position.z += floorSize/2;  // 位置 Z 偏移
-
-                // 複製旋轉並增加角度偏移（使用歐拉角）
-                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
-
-                // 繞 X 軸旋轉 180 度
-                const qX = new CANNON.Quaternion();
-                qX.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), 0);
-
-                // 繞 Y 軸旋轉 180 度
-                const qY = new CANNON.Quaternion();
-                qY.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI/2 +Math.PI/2+Math.PI/2);
-
-                // 繞 Z 軸旋轉 180 度
-                const qZ = new CANNON.Quaternion();
-                qZ.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), 0);
-
-                // 組合旋轉：先繞 X 軸，再繞 Z 軸
-                gm.gameInfo.floorDebugMesh.quaternion.copy(qZ.mult(qY).mult(qX));
-
-                // 如果需要角度偏移，可以轉換為歐拉角進行調整
-                const euler = new THREE.Euler().setFromQuaternion(gm.gameInfo.floorBody.quaternion);
-                euler.x += 0;  // 角度 X 偏移（弧度）
-                euler.y += 30;  // 角度 Y 偏移（弧度）
-                euler.z += 0;  // 角度 Z 偏移（弧度）
-                //gm.gameInfo.floorDebugMesh.quaternion.setFromEuler(euler);
             }
 
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
@@ -1225,18 +1144,19 @@
 
             gm.sceneInfo = setupScene();
             gm.gameInfo = {
-                gridSize: 21, cellSize: 4, heightData: null, obstacles: [], treasures: [], obstacleMeshes: [],
+                gridSize: 21, cellSize: 4, maze: null, wallBodies: [], obstacles: [], treasures: [], obstacleMeshes: [],
                 obstacleBodies: [], treasureMeshes: new Map(), key: null, door: null, lastSpawnTime: -9999,
                 getLastSpawnTime: function() { return this.lastSpawnTime; },
                 setLastSpawnTime: function(time) { this.lastSpawnTime = time; }
             };
 
-            const {heightData, obstacles, treasures} = generateTerrain(gm.gameInfo.gridSize, gm.gameInfo.cellSize);
-            gm.gameInfo.heightData = heightData;
+            const {maze, obstacles, treasures} = generateMaze(gm.gameInfo.gridSize, gm.gameInfo.cellSize);
+            gm.gameInfo.maze = maze;
             gm.gameInfo.obstacles = obstacles;
             gm.gameInfo.treasures = treasures;
 
             createFloor(gm.sceneInfo, gm.gameInfo);
+            gm.gameInfo.wallBodies = createWalls(gm.sceneInfo, gm.gameInfo);
             const {obstacleMeshes, obstacleBodies, key, door} = createObstacles(gm.sceneInfo, gm.gameInfo);
             gm.gameInfo.obstacleMeshes = obstacleMeshes;
             gm.gameInfo.obstacleBodies = obstacleBodies;
