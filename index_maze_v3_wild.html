@@ -22,7 +22,7 @@
         }
         #joystick-container {
             position: absolute;
-            bottom: 20px;
+            bottom: 80px;
             left: 20px;
             width: 150px;
             height: 150px;
@@ -44,7 +44,7 @@
         }
         #attack-button {
             position: absolute;
-            bottom: 20px;
+            bottom: 80px;
             right: 20px;
             padding: 15px 30px;
             font-size: 20px;
@@ -83,6 +83,7 @@
         <button data-camera="perspective">(1)</button>
         <button data-camera="firstPerson">(2)</button>
         <button data-camera="topDown">(3)</button>
+        <button id="fullscreenButton">FullScreen</button>
     </div>
     <div id="joystick-container">
         <div id="joystick"></div>
@@ -110,6 +111,12 @@
         const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
         //const ext_resource_url = '.';
         const textureLoader = new THREE.TextureLoader();
+
+        function isWithinRenderDistance(objPosition, playerPosition, renderDistance) {
+            const dx = objPosition.x - playerPosition.x;
+            const dz = objPosition.z - playerPosition.z;
+            return (dx * dx + dz * dz) <= (renderDistance * renderDistance); // 使用平方距離避免開方計算
+        }
 
         function createDebugMeshFromCannonShape(body, shape) {
             let debugMesh;
@@ -261,10 +268,10 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.2);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.05);
             scene.add(hemiLight);
 
-            const spotLight = new THREE.SpotLight(0xffffff, 1000);
+            const spotLight = new THREE.SpotLight(0xffffff, 800);
             spotLight.position.set(0, 2, 0);
             spotLight.castShadow = true;
             spotLight.distance = 50;
@@ -532,8 +539,12 @@
                 });
                 sceneInfo.scene.add(soldier);
 
+                // 使用 CANNON.Box 替代 Sphere
+                //const shape = new CANNON.Box(new CANNON.Vec3(0.5, 1, 0.5));
+                //const body = new CANNON.Body({ mass: 5 });
                 const shape = new CANNON.Sphere(1);
                 const body = new CANNON.Body({mass: 5});
+
                 body.addShape(shape);
                 body.position.set(posX, posY + 10, posZ); // 物理體略高於地形避免嵌入
                 body.linearDamping = 0.9;
@@ -589,6 +600,9 @@
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier) return;
 
+            const renderDistance = 30; // 與敵人一致的渲染距離
+            const playerPosition = player.soldier.position;
+
             sceneInfo.world.step(delta);
             player.soldier.position.copy(player.body.position);
             player.soldier.position.y -= 1;
@@ -601,8 +615,8 @@
             if (player.body.position.y > terrainHeight + maxHeightAboveTerrain) {
                 player.body.position.y = terrainHeight + maxHeightAboveTerrain; // 直接校正到最大高度
                 player.body.velocity.y = 0; // 停止垂直速度
-            } else if (player.body.position.y < terrainHeight+minHeightAboveTerrain) {
-                player.body.position.y = terrainHeight+minHeightAboveTerrain; // 防止嵌入地形
+            } else if (player.body.position.y < terrainHeight + minHeightAboveTerrain) {
+                player.body.position.y = terrainHeight + minHeightAboveTerrain; // 防止嵌入地形
                 player.body.velocity.y = 0;
             }
             
@@ -871,18 +885,18 @@
                 }
             });
 
-            if (gameInfo.key.visible && player.soldier.position.distanceTo(gameInfo.key.position) < 2) {
+            if ( gameInfo.key && gameInfo.key.visible && player.soldier.position.distanceTo(gameInfo.key.position) < 2) {
                 player.hasKey = true;
                 gameInfo.key.visible = false;
             }
-            if (gameInfo.door.visible && player.hasKey && player.soldier.position.distanceTo(gameInfo.door.position) < 2) {
+            if ( gameInfo.door && gameInfo.door.visible && player.hasKey && player.soldier.position.distanceTo(gameInfo.door.position) < 2) {
                 gameMaster.newGame = true;
             }
 
             player.mixer.update(delta);
-            const spotlightDirection = new THREE.Vector3(0, 25, -15).applyQuaternion(player.soldier.quaternion).normalize();
-            sceneInfo.spotLight.position.copy(player.soldier.position).add(spotlightDirection.multiplyScalar(10)).add(new THREE.Vector3(0, 15, 0));
-            sceneInfo.spotLight.target.position.copy(player.soldier.position).add(new THREE.Vector3(0, 0, 5).applyQuaternion(player.soldier.quaternion));
+            const spotlightDirection = new THREE.Vector3(0, 5, -15).applyQuaternion(player.soldier.quaternion).normalize();
+            sceneInfo.spotLight.position.copy(player.soldier.position).add(spotlightDirection.multiplyScalar(0)).add(new THREE.Vector3(0, 20, 0));
+            sceneInfo.spotLight.target.position.copy(player.soldier.position).add(new THREE.Vector3(0, 0, 10).applyQuaternion(player.soldier.quaternion));
             sceneInfo.scene.add(sceneInfo.spotLight.target);
 
             const elapsedTime = sceneInfo.clock.getElapsedTime();
@@ -899,14 +913,31 @@
 
             if (gameMaster.cameraMode === 'firstPerson') {
                 sceneInfo.camera.position.copy(player.soldier.position).add(new THREE.Vector3(0, 2, 0));
+                sceneInfo.camera.rotation.set(0, 0, 0);
                 sceneInfo.camera.rotation.y = player.soldier.rotation.y + Math.PI;
             } else if (gameMaster.cameraMode === 'topDown') {
-                sceneInfo.camera.position.set(player.soldier.position.x, 20, player.soldier.position.z);
+                const offsetY = inputInfo.cameraOffsetY(); // 動態獲取高度偏移
+                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z);
                 sceneInfo.camera.lookAt(player.soldier.position);
             } else if (sceneInfo.controls) {
                 sceneInfo.controls.target.copy(player.soldier.position);
                 sceneInfo.controls.update();
             }
+
+            /*
+            // 更新障礙物可見性
+            gameInfo.obstacleMeshes.forEach(mesh => {
+                mesh.visible = isWithinRenderDistance(mesh.position, playerPosition, renderDistance);
+            });
+
+            // 更新寶藏可見性
+            gameInfo.treasureMeshes.forEach((mesh) => {
+                mesh.visible = isWithinRenderDistance(mesh.position, playerPosition, renderDistance);
+            });
+            // 更新鑰匙和門的可見性
+            if (gameInfo.key) gameInfo.key.visible = gameInfo.key.visible && isWithinRenderDistance(gameInfo.key.position, playerPosition, renderDistance);
+            if (gameInfo.door) gameInfo.door.visible = gameInfo.door.visible && isWithinRenderDistance(gameInfo.door.position, playerPosition, renderDistance);
+            */
 
             document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
         }
@@ -931,10 +962,18 @@
                 enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
                 sceneInfo.scene.add(enemy);
 
-                const shape = new CANNON.Sphere(1);
-                const body = new CANNON.Body({mass: 5});
+                // 預計算邊界框
+                enemy.traverse(child => {
+                    if (child.isMesh && child.geometry) {
+                        child.geometry.computeBoundingBox(); // 為每個 Mesh 的幾何體計算邊界框
+                    }
+                });
+                enemy.boundingBox = new THREE.Box3().setFromObject(enemy); // 為整個模型生成邊界框
+
+                const shape = new CANNON.Sphere(1); // 或使用 CANNON.Box
+                const body = new CANNON.Body({ mass: 5 });
                 body.addShape(shape);
-                body.position.set(posX, posY + 1, posZ); // 物理體略高於地形避免嵌入
+                body.position.set(posX, posY + 1, posZ);
                 body.linearDamping = 0.9;
                 body.angularDamping = 0.0;
                 sceneInfo.world.addBody(body);
@@ -955,12 +994,12 @@
                 healthCtx.fillStyle = '#00ff00';
                 healthCtx.fillRect(0, 0, 128, 16);
 
-                const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(document.createElement('canvas'))}));
+                const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(document.createElement('canvas')) }));
                 backgroundSprite.scale.set(2, 0.25, 1);
                 backgroundSprite.position.set(0, 5, 0);
                 enemy.add(backgroundSprite);
 
-                const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(healthCanvas)}));
+                const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(healthCanvas) }));
                 healthSprite.scale.set(2, 0.25, 1);
                 healthSprite.position.set(0, 5, 0);
                 enemy.add(healthSprite);
@@ -985,33 +1024,64 @@
 
         function updateEnemies(enemyInfo, playerInfo, gameInfo, delta, inputInfo) {
             const player = playerInfo.getPlayer();
+            if (!player || !player.soldier) return;
+
+            const renderDistance = 30;
+            const playerPosition = player.soldier.position;
+
+            // 定義並初始化視錐對象
+            const frustum = new THREE.Frustum();
+            frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(
+                gameMaster.sceneInfo.camera.projectionMatrix, 
+                gameMaster.sceneInfo.camera.matrixWorldInverse
+            ));
+
             const idleRange = 2, attackRange = 3, patrolSpeed = 2, chaseSpeed = 5, rotationSpeed = 5, detectionRange = 15, fieldOfView = Math.PI * 2 / 3;
-            const alertRange = 15;
 
             enemyInfo.enemies.forEach(enemy => {
                 if (!enemy.mixer) return;
+
+                // 更新位置
                 enemy.mixer.update(delta);
                 enemy.position.copy(enemy.body.position);
                 enemy.position.y -= 1;
 
-                // 校正 Y 軸位置，限制高度為角色身高的一半
+                // 校正 Y 軸位置
                 const terrainHeight = getTerrainHeightAt(enemy.body.position.x, enemy.body.position.z, gameInfo);
-                const maxHeightAboveTerrain = 1; // 角色身高的一半（身高約為 2，半高為 1）
-                const minHeightAboveTerrain = 0.2
+                const maxHeightAboveTerrain = 1;
+                const minHeightAboveTerrain = 0.2;
                 if (enemy.body.position.y > terrainHeight + maxHeightAboveTerrain) {
-                    enemy.body.position.y = terrainHeight + maxHeightAboveTerrain; // 直接校正到最大高度
-                    enemy.body.velocity.y = 0; // 停止垂直速度
-                } else if (enemy.body.position.y < terrainHeight+minHeightAboveTerrain) {
-                    enemy.body.position.y = terrainHeight+minHeightAboveTerrain; // 防止嵌入地形
+                    enemy.body.position.y = terrainHeight + maxHeightAboveTerrain;
+                    enemy.body.velocity.y = 0;
+                } else if (enemy.body.position.y < terrainHeight + minHeightAboveTerrain) {
+                    enemy.body.position.y = terrainHeight + minHeightAboveTerrain;
                     enemy.body.velocity.y = 0;
                 }
-                
+
+                // 距離和視錐檢查
+                const inRange = isWithinRenderDistance(enemy.position, playerPosition, renderDistance);
+                enemy.boundingBox.setFromObject(enemy); // 動態更新邊界框
+                const inFrustum = frustum.intersectsBox(enemy.boundingBox);
+                enemy.visible = inRange && inFrustum;
+                enemy.healthBar.visible = enemy.visible && enemy.healthBarBackground.visible;
+                enemy.healthBarBackground.visible = enemy.visible;
+
+                if (!enemy.visible) return;
+
+                // 檢查是否在渲染距離內
+                const shouldRender = isWithinRenderDistance(enemy.position, playerPosition, renderDistance);
+                enemy.visible = shouldRender;
+                enemy.healthBar.visible = shouldRender && enemy.healthBarBackground.visible; // 只在可見且靠近時顯示健康條
+                enemy.healthBarBackground.visible = shouldRender;
+
+                if (!shouldRender) return; // 若不可見，跳過後續邏輯更新以節省 CPU
+
                 if (enemy.attackCooldown > 0) enemy.attackCooldown -= delta;
 
-                const distanceToPlayer = player && player.soldier ? enemy.position.distanceTo(player.soldier.position) : Infinity;
-                enemy.healthBar.visible = enemy.healthBarBackground.visible = distanceToPlayer < attackRange;
+                const distanceToPlayer = enemy.position.distanceTo(playerPosition);
+                enemy.healthBar.visible = enemy.visible && distanceToPlayer < attackRange;
 
-                if (player && distanceToPlayer <= attackRange && enemy.attackCooldown <= 0) {
+                if (distanceToPlayer <= attackRange && enemy.attackCooldown <= 0) {
                     enemy.isAttacking = true;
                     if (enemy.currentAction !== enemy.actions.attack) {
                         enemy.currentAction.fadeOut(0.2);
@@ -1036,18 +1106,16 @@
                         }
                     }, 700);
                 } else if (!enemy.isAttacking) {
-                    if (player && distanceToPlayer <= idleRange) {
+                    if (distanceToPlayer <= idleRange) {
                         if (enemy.currentAction !== enemy.actions.idle) {
                             enemy.currentAction.fadeOut(0.2);
                             enemy.actions.idle.reset().fadeIn(0.2).play();
                             enemy.currentAction = enemy.actions.idle;
                         }
                         enemy.body.velocity.set(0, enemy.body.velocity.y, 0);
-                    } else if (player && canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
+                    } else if (canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
                         enemy.targetPosition = player.soldier.position.clone();
                         enemy.isChasing = true;
-                        /// may cause heavy loading
-                        /// alertNearbyEnemies(gameInfo.wallBoxes, enemy, enemyInfo.enemies, player.soldier, alertRange);
                         const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
                         enemy.rotation.y += getShortestAngleDifference(enemy.rotation.y, Math.atan2(direction.x, direction.z)) * rotationSpeed * delta;
                         enemy.body.velocity.set(direction.x * chaseSpeed, enemy.body.velocity.y, direction.z * chaseSpeed);
@@ -1081,7 +1149,6 @@
                 enemy.healthBar.material.map.needsUpdate = true;
             });
         }
-
         function canSeePlayer(enemy, playerSoldier, obstacleBodies, fieldOfView) {
             if (!playerSoldier) return false;
 
@@ -1184,7 +1251,7 @@
             const time = gm.sceneInfo.clock.getElapsedTime();
 
             if (time - gm.gameInfo.getLastSpawnTime() > 1) {
-                spawnEnemy(gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
+                spawnEnemy(gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 100);
                 gm.gameInfo.setLastSpawnTime(time);
             }
 
@@ -1207,6 +1274,12 @@
                 mouseLeft: false, mouseMovementX: 0, mouseMovementY: 0, joystick: {x: 0, y: 0}
             };
             const mouse = new THREE.Vector2();
+
+            // 攝影機高度偏移（用於 topDown 視角）
+            let cameraOffsetY = 20; // 初始高度偏移（與 updatePlayer 中的默認值一致）
+            const minOffsetY = 5;   // 最小高度（拉近）
+            const maxOffsetY = 100;  // 最大高度（拉遠）
+            const zoomSpeed = 1;  // 滾輪縮放速度
 
             document.querySelectorAll('#camera-buttons button').forEach(button => {
                 button.addEventListener('click', () => switchCamera(button.dataset.camera, sceneInfo));
@@ -1249,6 +1322,15 @@
 
             const mouseUpHandler = e => e.button === 0 && (keys.mouseLeft = false);
 
+            // 添加滑鼠滾輪事件監聽器
+            const wheelHandler = e => {
+                if (gameMaster.cameraMode === 'topDown') {
+                    // 根據滾輪方向調整高度偏移
+                    cameraOffsetY -= e.deltaY * zoomSpeed * 0.01; // deltaY 正值表示向下滾（拉遠），負值表示向上滾（拉近）
+                    cameraOffsetY = Math.max(minOffsetY, Math.min(maxOffsetY, cameraOffsetY)); // 限制範圍
+                }
+            };
+
             const resizeHandler = () => {
                 sceneInfo.camera.aspect = window.innerWidth / window.innerHeight;
                 sceneInfo.camera.updateProjectionMatrix();
@@ -1260,6 +1342,7 @@
             window.addEventListener('mousemove', mouseMoveHandler);
             window.addEventListener('mousedown', mouseDownHandler);
             window.addEventListener('mouseup', mouseUpHandler);
+            window.addEventListener('wheel', wheelHandler);
             window.addEventListener('resize', resizeHandler);
 
             const joystickContainer = document.getElementById('joystick-container');
@@ -1326,12 +1409,14 @@
 
             return {
                 keys, mouse,
+                cameraOffsetY: () => cameraOffsetY, // 提供方法以獲取當前高度偏移
                 removeListeners: () => {
                     window.removeEventListener('keydown', keyDownHandler);
                     window.removeEventListener('keyup', keyUpHandler);
                     window.removeEventListener('mousemove', mouseMoveHandler);
                     window.removeEventListener('mousedown', mouseDownHandler);
                     window.removeEventListener('mouseup', mouseUpHandler);
+                    window.removeEventListener('wheel', wheelHandler);
                     window.removeEventListener('resize', resizeHandler);
                     joystickContainer.removeEventListener('touchstart', handleJoystickStart);
                     joystickContainer.removeEventListener('touchmove', handleJoystickMove);
@@ -1362,6 +1447,11 @@
         }
 
         function initNewLevel(gm) {
+            const fullscreenButton = document.getElementById('fullscreenButton');
+            if (fullscreenButton) {
+                fullscreenButton.addEventListener('click', toggleFullscreen);
+            }
+
             const oldPlayer = gm.playerInfo?.getPlayer();
             const savedState = {
                 health: oldPlayer?.health || 100,
@@ -1391,13 +1481,14 @@
             gm.stats.dom.style.left = '0px';
 
             const {heightData} = generateTerrain(gm.gameInfo.gridSize, gm.gameInfo.cellSize);
+            gm.gameInfo.heightData = heightData;
+            createFloor(gm.sceneInfo, gm.gameInfo);
+
             const {maze, obstacles, treasures} = generateMaze(gm.gameInfo.gridSize, gm.gameInfo.cellSize);
             gm.gameInfo.maze = maze;
-            gm.gameInfo.heightData = heightData;
             gm.gameInfo.obstacles = obstacles;
             gm.gameInfo.treasures = treasures;
 
-            createFloor(gm.sceneInfo, gm.gameInfo);
             gm.gameInfo.wallBoxes = createWalls(gm.sceneInfo, gm.gameInfo);
             const {obstacleMeshes, obstacleBodies, key, door} = createObstacles(gm.sceneInfo, gm.gameInfo);
             gm.gameInfo.obstacleMeshes = obstacleMeshes;
@@ -1423,6 +1514,32 @@
             animate(gm);
         }
 
+        function toggleFullscreen() {
+            const elem = document.documentElement; // 使用整個頁面作為全螢幕目標
+            if (!document.fullscreenElement) {
+                // 進入全螢幕
+                elem.requestFullscreen().then(() => {
+                    resizeRenderer(gameMaster.sceneInfo);
+                }).catch(err => {
+                    console.error('無法進入全螢幕:', err);
+                });
+            } else {
+                // 退出全螢幕
+                document.exitFullscreen().then(() => {
+                    resizeRenderer(gameMaster.sceneInfo);
+                }).catch(err => {
+                    console.error('無法退出全螢幕:', err);
+                });
+            }
+        }
+
+        function resizeRenderer(sceneInfo) {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            sceneInfo.renderer.setSize(width, height);
+            sceneInfo.camera.aspect = width / height;
+            sceneInfo.camera.updateProjectionMatrix();
+        }
         let gameMaster = {gameInfo: null, sceneInfo: null, playerInfo: null, enemyInfo: null, inputInfo: null, newGame: true, cameraMode: 'topDown'};
         initNewLevel(gameMaster);
     </script>
