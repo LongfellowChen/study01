@@ -102,6 +102,9 @@
     </script>
     <script type="module">
         const debugPhysics = false; // 設為 true 啟用物理形狀可視化
+        const enableRenderDistance = true;
+        const globalRenderDistance = 35;
+        const arrow_sub1 = 0;
 
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -198,7 +201,7 @@
             return {heightData};
         }
 
-        function generateMaze(gridSize, cellSize, removeWallPercentage = 0.8, obstacleProbability = 0.2, treasureProbability = 0.1) {
+        function generateMaze(gridSize, cellSize, removeWallPercentage = 0.8, obstacleProbability = 0.1, treasureProbability = 0.1) {
             const maze = Array(gridSize).fill().map(() => Array(gridSize).fill(1));
             const obstacles = [];
             const treasures = [];
@@ -240,14 +243,42 @@
 
             for (let y = 1; y < gridSize - 1; y++) {
                 for (let x = 1; x < gridSize - 1; x++) {
-                    if (maze[x][y] === 1 && random() < removeWallPercentage) maze[x][y] = 0;
-                    else if (maze[x][y] === 0 && !(x === 1 && y === 1)) {
-                        if (random() < obstacleProbability) obstacles.push({x, z: y, durability: Math.floor(random() * 3) + 1});
-                        else if (random() < treasureProbability) treasures.push({x, z: y, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+                    if (maze[x][y] === 1 && random() < removeWallPercentage) 
+                        maze[x][y] = 0;
+                }
+            }
+/*
+            for (let y = 1; y < gridSize - 1; y++) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    if (maze[x][y] === 0 && !(x === 1 && y === 1)) {
+                        if (random() < obstacleProbability && obstacles.length <=30 ) 
+                            obstacles.push({x, z: y, durability: Math.floor(random() * 3) + 1});
+                        else if (random() < treasureProbability && treasures.length <=30 ) 
+                            treasures.push({x, z: y, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
                     }
                 }
             }
+*/
 
+            // 計算障礙物和寶箱的數量比例
+            const obstacleCount = Math.floor(gridSize*gridSize*obstacleProbability);
+            const treasureCount = Math.floor(gridSize*gridSize*treasureProbability)
+            // 生成障礙物
+            for (let i = 0; i < obstacleCount; i++) {
+                const x = Math.floor(Math.random() * gridSize);
+                const z = Math.floor(Math.random() * gridSize);        
+                obstacles.push({ x, z, durability: Math.floor(Math.random() * 3) + 1});
+            }
+
+            // 生成寶箱
+            for (let i = 0; i < treasureCount; i++) {
+                const x = Math.floor(Math.random() * gridSize);
+                const z = Math.floor(Math.random() * gridSize);        
+                const types = ['health', 'attack', 'speed', 'bow'];
+                treasures.push({x, z, type: types[Math.floor(Math.random() * 4)]});
+            }
+
+            //maze.fill(0);
             return {maze, obstacles, treasures};
         }
 
@@ -602,15 +633,26 @@
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier) return;
 
-            const renderDistance = 30; // 與敵人一致的渲染距離
+            const renderDistance = globalRenderDistance; // 與敵人一致的渲染距離
             const playerPosition = player.soldier.position;
 
-            // 更新牆可見性
-            if( gameInfo.wallMeshes )
+            if( enableRenderDistance )
             {
+                // 更新牆可見性
                 gameInfo.wallMeshes.forEach(wall => {
                     wall.visible = isWithinRenderDistance(wall.position, playerPosition, renderDistance);
                 });
+                // 更新障礙物可見性
+                gameInfo.obstacleMeshes.forEach(mesh => {
+                    mesh.visible = isWithinRenderDistance(mesh.position, playerPosition, renderDistance);
+                });
+                // 更新寶藏可見性
+                gameInfo.treasureMeshes.forEach((mesh) => {
+                    mesh.visible = isWithinRenderDistance(mesh.position, playerPosition, renderDistance);
+                });
+                // 更新鑰匙和門的可見性
+                if (gameInfo.key) gameInfo.key.visible = gameInfo.key.visible && isWithinRenderDistance(gameInfo.key.position, playerPosition, renderDistance);
+                if (gameInfo.door) gameInfo.door.visible = gameInfo.door.visible && isWithinRenderDistance(gameInfo.door.position, playerPosition, renderDistance);
             }
 
             sceneInfo.world.step(delta);
@@ -748,7 +790,7 @@
                 const playerForward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.soldier.quaternion).normalize();
 
                 if (player.hasBow && player.arrowCount > 0) {
-                    player.arrowCount--;
+                    player.arrowCount = player.arrowCount-arrow_sub1;
                     const arrowGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
                     const arrowMaterial = new THREE.MeshBasicMaterial({color: 0xFF0000});
                     const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial);
@@ -762,7 +804,7 @@
                     arrowBody.addShape(new CANNON.Box(new CANNON.Vec3(0.025, 0.5, 0.025)));
                     arrowBody.position.copy(arrow.position);
                     arrowBody.quaternion.copy(arrow.quaternion);
-                    const arrowSpeed = 30;
+                    const arrowSpeed = 60;
                     arrowBody.velocity.set(playerForward.x * arrowSpeed, 0, playerForward.z * arrowSpeed);
                     arrowBody.hasHit = false;
                     sceneInfo.world.addBody(arrowBody);
@@ -934,19 +976,6 @@
                 sceneInfo.controls.update();
             }
 
-            // 更新障礙物可見性
-            gameInfo.obstacleMeshes.forEach(mesh => {
-                mesh.visible = isWithinRenderDistance(mesh.position, playerPosition, renderDistance);
-            });
-
-            // 更新寶藏可見性
-            gameInfo.treasureMeshes.forEach((mesh) => {
-                mesh.visible = isWithinRenderDistance(mesh.position, playerPosition, renderDistance);
-            });
-            // 更新鑰匙和門的可見性
-            if (gameInfo.key) gameInfo.key.visible = gameInfo.key.visible && isWithinRenderDistance(gameInfo.key.position, playerPosition, renderDistance);
-            if (gameInfo.door) gameInfo.door.visible = gameInfo.door.visible && isWithinRenderDistance(gameInfo.door.position, playerPosition, renderDistance);
-
             document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
         }
 
@@ -1034,7 +1063,7 @@
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier) return;
 
-            const renderDistance = 30;
+            const renderDistance = globalRenderDistance;
             const playerPosition = player.soldier.position;
 
             // 定義並初始化視錐對象
@@ -1180,11 +1209,6 @@
         }
 
         function alertNearbyEnemies(wallBoxes, alertingEnemy, enemies, playerSoldier, alertRange) {
-            // 防護檢查：如果 wallBoxes 是 undefined 或不是陣列，則直接返回
-            if (!wallBoxes || !Array.isArray(wallBoxes)) {
-                console.warn('wallBoxes is undefined or not an array, skipping alertNearbyEnemies.');
-                return;
-            }
 
             enemies.forEach(enemy => {
                 if (enemy === alertingEnemy || enemy.isChasing) return;
@@ -1196,8 +1220,6 @@
                         console.log('Enemy alerted!');
                     } else {
                         enemy.targetPosition = alertingEnemy.position.clone();
-                        //const terrainHeight = getTerrainHeightAt(enemy.targetPosition.x, enemy.targetPosition.z, gameMaster.gameInfo);
-                        //enemy.targetPosition.y = terrainHeight;
                     }
                 }
             });
