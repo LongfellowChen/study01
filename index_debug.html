@@ -351,7 +351,7 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.02);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
             scene.add(hemiLight);
 
             const spotLight = new THREE.SpotLight(0xffffff, 800);
@@ -377,7 +377,7 @@
             gameInfo.gridSize = gameInfo.chunkSize / gameInfo.cellSize + 1; // 每個區塊的格子數（5x5）
             gameInfo.chunks = new Map(); // 儲存活躍區塊（key: "x,z", value: { mesh, body }）
 
-            const floorTexture = textureLoader.load(ext_resource_url + '/textures/rock.png');
+            const floorTexture = textureLoader.load(ext_resource_url + '/textures/tile.jpeg');
             floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
             floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
             gameInfo.floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
@@ -456,39 +456,60 @@
         }
 
         function getTerrainHeightAt(x, z, gameInfo) {
-            const chunkX = Math.floor(x / gameInfo.chunkSize);
-            const chunkZ = Math.floor(z / gameInfo.chunkSize);
-            const chunkKey = `${chunkX},${chunkZ}`;
-            const chunk = gameInfo.chunks.get(chunkKey);
+        
+        x = (x+gameInfo.chunkSize/2);
+        z = (z+gameInfo.chunkSize/2);
+        const chunkX = Math.floor( x / gameInfo.chunkSize);
+        const chunkZ = Math.floor( z / gameInfo.chunkSize);
+        const chunkKey = `${chunkX},${chunkZ}`;
+        const chunk = gameInfo.chunks.get(chunkKey);
 
-            if (!chunk || !chunk.heightData) {
-                console.log(`No chunk found at ${chunkKey} for position (${x}, ${z})`);
-                return 0;
-            }
-
-            const localX = x - chunkX * gameInfo.chunkSize;
-            const localZ = z - chunkZ * gameInfo.chunkSize;
-            const gridX = Math.floor(localX / gameInfo.cellSize);
-            const gridZ = Math.floor(localZ / gameInfo.cellSize);
-            const gridSize = gameInfo.gridSize - 1;
-
-            const gx = Math.max(0, Math.min(gridX, gridSize));
-            const gz = Math.max(0, Math.min(gridZ, gridSize));
-
-            const h00 = chunk.heightData[gx][gz];
-            const h10 = chunk.heightData[Math.min(gx + 1, gridSize)][gz];
-            const h01 = chunk.heightData[gx][Math.min(gz + 1, gridSize)];
-            const h11 = chunk.heightData[Math.min(gx + 1, gridSize)][Math.min(gz + 1, gridSize)];
-
-            const tx = (localX - gx * gameInfo.cellSize) / gameInfo.cellSize;
-            const tz = (localZ - gz * gameInfo.cellSize) / gameInfo.cellSize;
-            const height = h00 * (1 - tx) * (1 - tz) +
-                        h10 * tx * (1 - tz) +
-                        h01 * (1 - tx) * tz +
-                        h11 * tx * tz;
-
-            return height;
+        if (!chunk || !chunk.heightData) {
+            console.log(`No chunk found at ${chunkKey} for position (${x}, ${z})`);
+            return 0;
         }
+
+        // **旋轉 heightData 以匹配物理地面方向**
+        const rotatedHeightData = [];
+        for (let z = 0; z < gameInfo.gridSize; z++) {
+            const row = [];
+            for (let x = 0; x < gameInfo.gridSize; x++) {
+                row.push(chunk.heightData.at(x)?.at(z));
+            }
+            rotatedHeightData.push(row);
+        }
+        console.log(`rotatedHeightData:`, rotatedHeightData);
+
+        const localX = x - chunkX * gameInfo.chunkSize;
+        const localZ = z - chunkZ * gameInfo.chunkSize;
+        const gridXFloat = localX / gameInfo.cellSize;
+        const gridZFloat = localZ / gameInfo.cellSize;
+        const gridSize = gameInfo.gridSize; // 注意這裡不再減 1
+
+        const gx = Math.floor(gridXFloat);
+        const gz = Math.floor(gridZFloat);
+
+        if (gx < 0 || gx >= gridSize - 1 || gz < 0 || gz >= gridSize - 1) {
+            // 超出網格邊界，返回邊界上的高度或 0
+            return 0;
+        }
+
+        const h00 = rotatedHeightData [gx][gz];
+        return h00;
+        const h10 = rotatedHeightData [gx + 1][gz];
+        const h01 = rotatedHeightData [gx][gz + 1];
+        const h11 = rotatedHeightData [gx + 1][gz + 1];
+
+        const tx = gridXFloat - gx;
+        const tz = gridZFloat - gz;
+        const height = h00 * (1 - tx) * (1 - tz) +
+                       h10 * tx * (1 - tz) +
+                       h01 * (1 - tx) * tz +
+                       h11 * tx * tz;
+
+        return height;
+    }
+        
         function createWalls(sceneInfo, gameInfo) {
             const wallTexture = textureLoader.load(ext_resource_url + '/textures/wall.png');
             wallTexture.wrapS = wallTexture.wrapT = THREE.RepeatWrapping;
@@ -701,6 +722,7 @@
             const chunkZ = Math.floor(playerPosition.z / gameInfo.chunkSize);
             const renderDistance = 1;
 
+            /*
             // 從中心點向外擴展
             for (let distance = 0; distance <= renderDistance; distance++) {
                 // 遍歷當前層的所有區塊
@@ -714,7 +736,8 @@
                         }
                     }
                 }
-            }
+            }*/
+
 
             const maxDistance = renderDistance + 1;
             for (const [key, chunk] of gameInfo.chunks) {
@@ -733,10 +756,15 @@
             player.soldier.position.y -= 1;
             player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
 
-/*
             const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
-            const maxHeightAboveTerrain = 1;
-            const minHeightAboveTerrain = 0.2;
+            console.log(
+        player.body.position.y.toFixed(2),
+        terrainHeight.toFixed(2),
+        (player.body.position.y - terrainHeight).toFixed(2)
+    );            /*
+            const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
+            const maxHeightAboveTerrain = 5;
+            const minHeightAboveTerrain = 2;
             if (player.body.position.y > terrainHeight + maxHeightAboveTerrain) {
                 player.body.position.y = terrainHeight + maxHeightAboveTerrain;
                 player.body.velocity.y = 0;
@@ -1151,12 +1179,11 @@
                 enemy.mixer.update(delta);
                 enemy.position.copy(enemy.body.position);
                 enemy.position.y -= 1;
-
-                /*
+/*
                 // 校正 Y 軸位置
                 const terrainHeight = getTerrainHeightAt(enemy.body.position.x, enemy.body.position.z, gameInfo);
-                const maxHeightAboveTerrain = 1;
-                const minHeightAboveTerrain = 0.2;
+                const maxHeightAboveTerrain = 5;
+                const minHeightAboveTerrain = 2;
                 if (enemy.body.position.y > terrainHeight + maxHeightAboveTerrain) {
                     enemy.body.position.y = terrainHeight + maxHeightAboveTerrain;
                     enemy.body.velocity.y = 0;
@@ -1358,8 +1385,8 @@
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
 
-            if (time - gm.gameInfo.getLastSpawnTime() > 1) {
-                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 100);
+            if (time - gm.gameInfo.getLastSpawnTime() > 100) {
+                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 1);
                 gm.gameInfo.setLastSpawnTime(time);
             }
 
@@ -1586,7 +1613,7 @@
 
             gm.sceneInfo = setupScene();
             gm.gameInfo = {
-                chunkSize: 20,
+                chunkSize: 8,
                 cellSize: 4,
                 gridSize: 6, // 20 / 4 + 1 = 6x6（5 格子 + 1）
                 chunks: new Map(),
