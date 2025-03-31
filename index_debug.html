@@ -372,8 +372,8 @@
         }
 
         function createFloor(sceneInfo, gameInfo) {
-            gameInfo.chunkSize = 20; // 每個區塊大小（例如 20x20）
-            gameInfo.cellSize = 4; // 每個格子大小
+            gameInfo.chunkSize = 60; // 每個區塊大小（例如 20x20）
+            gameInfo.cellSize = 20; // 每個格子大小
             gameInfo.gridSize = gameInfo.chunkSize / gameInfo.cellSize + 1; // 每個區塊的格子數（5x5）
             gameInfo.chunks = new Map(); // 儲存活躍區塊（key: "x,z", value: { mesh, body }）
 
@@ -731,6 +731,8 @@
             sceneInfo.world.step(delta);
             player.soldier.position.copy(player.body.position);
             player.soldier.position.y -= 1;
+            player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
+
 /*
             const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
             const maxHeightAboveTerrain = 1;
@@ -1357,7 +1359,7 @@
             const time = gm.sceneInfo.clock.getElapsedTime();
 
             if (time - gm.gameInfo.getLastSpawnTime() > 1) {
-                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 10);
+                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 100);
                 gm.gameInfo.setLastSpawnTime(time);
             }
 

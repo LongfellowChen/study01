@@ -731,6 +731,8 @@
             sceneInfo.world.step(delta);
             player.soldier.position.copy(player.body.position);
             player.soldier.position.y -= 1;
+            player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
+            
 /*
             const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
             const maxHeightAboveTerrain = 1;
