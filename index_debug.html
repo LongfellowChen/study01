@@ -1,142 +1,1703 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Three.js WebGPU 水波粒子效果</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Wild World Game Demo</title>
     <style>
-        body { margin: 0; overflow: hidden; }
-        canvas { width: 100%; height: 100%; }
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        #debug {
+            position: absolute;
+            top: 45px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 5px;
+            z-index: 100;
+        }
+        #joystick-container {
+            position: absolute;
+            bottom: 80px;
+            left: 20px;
+            width: 150px;
+            height: 150px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border-radius: 50%;
+            z-index: 100;
+            touch-action: none;
+        }
+        #joystick {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 70px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            touch-action: none;
+        }
+        #attack-button {
+            position: absolute;
+            bottom: 80px;
+            right: 20px;
+            padding: 15px 30px;
+            font-size: 20px;
+            background-color: red;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        #camera-buttons {
+            position: absolute;
+            top: 45px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            display: flex;
+        }
+        #camera-buttons button {
+            padding: 8px 12px;
+            margin: 0 5px;
+            font-size: 14px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #camera-buttons button:hover {
+            background-color: #367C39;
+        }
     </style>
 </head>
 <body>
-    <!-- Three.js 導入配置 -->
+    <div id="camera-buttons">
+        <button data-camera="perspective">(1)</button>
+        <button data-camera="firstPerson">(2)</button>
+        <button data-camera="topDown">(3)</button>
+        <button id="fullscreenButton">FullScreen</button>
+    </div>
+    <div id="joystick-container">
+        <div id="joystick"></div>
+    </div>
+    <button id="attack-button">Attack</button>
+    <div id="debug"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
     <script type="importmap">
         {
-          "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.module.js",
-            "three/webgpu": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.webgpu.js",
-            "three/tsl": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.tsl.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.174.0/examples/jsm/"
-          }
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@v0.174.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.174.0/examples/jsm/"
+            }
         }
     </script>
     <script type="module">
-        const debugPhysics = false; // 未使用物理引擎，保持變數但無效
+        const debugPhysics = false; // 設為 true 啟用物理形狀可視化
         const enableRenderDistance = true;
         const globalRenderDistance = 35;
         const arrow_sub1 = 0;
 
-        import * as THREE from "three/webgpu";
+        import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+        import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
         import Stats from "three/addons/libs/stats.module.js";
 
-        // 場景設置
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 50;
+        ///const ext_resource_url = 'https://cdn.jsdelivr.net/gh/LongfellowChen/study01@master';
+        const ext_resource_url = '.';
+        const textureLoader = new THREE.TextureLoader();
 
-        // WebGPU 渲染器
-        const renderer = new THREE.WebGPURenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // 滑鼠控制
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.screenSpacePanning = true;
-        controls.mouseButtons = {
-            LEFT: THREE.MOUSE.ROTATE,
-            RIGHT: THREE.MOUSE.PAN
-        };
-
-        // 粒子系統
-        const particleCount = 100000;
-        const positions = new Float32Array(particleCount * 3);
-        const velocities = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-
-        for (let i = 0; i < particleCount; i++) {
-            positions[i * 3] = (Math.random() - 0.5) * 100;
-            positions[i * 3 + 1] = (Math.random() - 0.5) * 100;
-            positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
-
-            velocities[i * 3] = (Math.random() - 0.5) * 0.1;
-            velocities[i * 3 + 1] = (Math.random() - 0.5) * 0.1;
-            velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.1;
-
-            colors[i * 3] = 0.1;
-            colors[i * 3 + 1] = 0.5;
-            colors[i * 3 + 2] = 1.0;
+        function isWithinRenderDistance(objPosition, playerPosition, renderDistance) {
+            const dx = objPosition.x - playerPosition.x;
+            const dz = objPosition.z - playerPosition.z;
+            return (dx * dx + dz * dz) <= (renderDistance * renderDistance); // 使用平方距離避免開方計算
         }
 
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        function createDebugMeshFromCannonShape(body, shape) {
+            let debugMesh;
 
-        const material = new THREE.PointsMaterial({
-            size: 0.5,
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.8
-        });
+            if (shape instanceof CANNON.Box) {
+                const size = shape.halfExtents;
+                const geometry = new THREE.BoxGeometry(size.x * 2, size.y * 2, size.z * 2);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Sphere) {
+                const geometry = new THREE.SphereGeometry(shape.radius, 16, 16);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            } else if (shape instanceof CANNON.Heightfield) {
+                const geometry = new THREE.BufferGeometry();
+                const vertices = [];
+                const indices = [];
+                let { elementSize } = shape;
+                const data = shape.data;
 
-        const particles = new THREE.Points(geometry, material);
-        scene.add(particles);
+                elementSize = elementSize*1.05;
+                // 計算網格的最大寬度，用於鏡向偏移
+                const maxX = (data.length - 1) * elementSize;
+                // 使用 floor 的總尺寸和分段數計算精確的 elementSize
+                const floorSize = (data.length - 1) * elementSize; // 假設 floorSize 應與 Heightfield 總尺寸一致
+                const correctedElementSize = floorSize / (data.length - 1); // 確保與 PlaneGeometry 的間距一致
 
-        // Stats
-        const stats = new Stats();
-        document.body.appendChild(stats.dom);
+                for (let x = 0; x < data.length - 1; x++) {
+                    for (let z = 0; z < data[0].length - 1; z++) {
+                        const y00 = data[x][z];
+                        const y10 = data[x + 1][z];
+                        const y01 = data[x][z + 1];
+                        const y11 = data[x + 1][z + 1];
 
-        // 水波動畫
-        function animateParticles() {
-            const time = performance.now() * 0.001;
+                        const xPos = x * correctedElementSize;
+                        const zPos = z * correctedElementSize;
 
-            for (let i = 0; i < particleCount; i++) {
-                const i3 = i * 3;
+                        // 沿 X 軸鏡向：將 xPos 取反並偏移
+                        vertices.push(maxX - xPos, y00, zPos);
+                        vertices.push(maxX - (xPos + correctedElementSize), y10, zPos);
+                        vertices.push(maxX - xPos, y01, zPos + correctedElementSize);
+                        vertices.push(maxX - (xPos + correctedElementSize), y11, zPos + correctedElementSize);
 
-                // 簡單水波效果：使用正弦函數
-                positions[i3 + 1] += Math.sin(time + positions[i3] + positions[i3 + 2]) * 0.05;
+                        const base = (x * (data[0].length - 1) + z) * 4;
+                        indices.push(base, base + 1, base + 2);
+                        indices.push(base + 1, base + 3, base + 2);
+                    }
+                }
 
-                // 邊界檢查與速度更新
-                positions[i3] += velocities[i3];
-                positions[i3 + 2] += velocities[i3 + 2];
-                if (positions[i3 + 1] > 50 || positions[i3 + 1] < -50) velocities[i3 + 1] *= -1;
-                if (positions[i3] > 50 || positions[i3] < -50) velocities[i3] *= -1;
-                if (positions[i3 + 2] > 50 || positions[i3 + 2] < -50) velocities[i3 + 2] *= -1;
 
-                // 渲染距離限制
-                if (enableRenderDistance) {
-                    const distance = camera.position.distanceTo({
-                        x: positions[i3],
-                        y: positions[i3 + 1],
-                        z: positions[i3 + 2]
-                    });
-                    colors[i3 + 1] = distance < globalRenderDistance ? 0.5 : 0;
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setIndex(indices);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                debugMesh = new THREE.Mesh(geometry, material);
+            }
+
+            return debugMesh;
+        }
+
+        function getShortestAngleDifference(currentAngle, targetAngle) {
+            let delta = targetAngle - currentAngle;
+            delta = ((delta + Math.PI) % (2 * Math.PI)) - Math.PI;
+            return delta;
+        }
+
+        function generateTerrain(chunkX, chunkZ, chunkSize, cellSize, gameInfo) {
+            const simplex = new SimplexNoise();
+            const gridSize = chunkSize / cellSize + 1; // 6x6
+            const heightData = Array(gridSize).fill().map(() => Array(gridSize).fill(0));
+
+            // 檢查相鄰區塊
+            const leftChunk = gameInfo.chunks.get(`${chunkX - 1},${chunkZ}`);
+            const rightChunk = gameInfo.chunks.get(`${chunkX + 1},${chunkZ}`);
+            const topChunk = gameInfo.chunks.get(`${chunkX},${chunkZ + 1}`);
+            const bottomChunk = gameInfo.chunks.get(`${chunkX},${chunkZ - 1}`);
+
+            // 首先獨立生成所有點的高度（作為基礎）
+            for (let x = 0; x < gridSize; x++) {
+                for (let z = 0; z < gridSize; z++) {
+                    const worldX = (chunkX * chunkSize) + (x * cellSize);
+                    const worldZ = (chunkZ * chunkSize) + (z * cellSize);
+                    const noiseValue = simplex.noise2D(worldX / 50, worldZ / 50);
+                    heightData[x][z] = (noiseValue + 1) * 3; // 高度範圍 0-4
+                    if (isNaN(heightData[x][z])) heightData[x][z] = 0;
+               }
+            }
+
+            // 修正邊緣高度，參考相鄰區塊
+            // 左邊緣 (x=0) 與左邊區塊的右邊緣 (x=5) 對齊
+            if (leftChunk && leftChunk.heightData) {
+                for (let z = 0; z < gridSize; z++) {
+                    heightData[z][0] = leftChunk.heightData[z][gridSize - 1];
                 }
             }
 
-            particles.geometry.attributes.position.needsUpdate = true;
-            particles.geometry.attributes.color.needsUpdate = true;
+            // 右邊緣 (x=5) 與右邊區塊的左邊緣 (x=0) 對齊
+            if (rightChunk && rightChunk.heightData) {
+                for (let z = 0; z < gridSize; z++) {
+                    heightData[z][gridSize - 1] = rightChunk.heightData[z][0];
+                }
+            }
+
+            // 上邊緣 (z=5) 與上邊區塊的下邊緣 (z=0) 對齊
+            if (topChunk && topChunk.heightData) {
+                for (let x = 0; x < gridSize; x++) {
+                    heightData[gridSize - 1][x] = topChunk.heightData[0][x];
+                }
+            }
+
+            // 下邊緣 (z=0) 與下邊區塊的上邊緣 (z=5) 對齊
+            if (bottomChunk && bottomChunk.heightData) {
+                for (let x = 0; x < gridSize; x++) {
+                    heightData[0][x] = bottomChunk.heightData[gridSize - 1][x];
+                }
+            }
+/*
+            // 對於角點，如果有多個相鄰區塊，平均高度（避免衝突）
+            if (leftChunk && bottomChunk) {
+                heightData[0][0] = (leftChunk.heightData[gridSize - 1][0] + bottomChunk.heightData[0][gridSize - 1]) / 2;
+            }
+            if (leftChunk && topChunk) {
+                heightData[0][gridSize - 1] = (leftChunk.heightData[gridSize - 1][gridSize - 1] + topChunk.heightData[0][0]) / 2;
+            }
+            if (rightChunk && bottomChunk) {
+                heightData[gridSize - 1][0] = (rightChunk.heightData[0][0] + bottomChunk.heightData[gridSize - 1][gridSize - 1]) / 2;
+            }
+            if (rightChunk && topChunk) {
+                heightData[gridSize - 1][gridSize - 1] = (rightChunk.heightData[0][gridSize - 1] + topChunk.heightData[gridSize - 1][0]) / 2;
+            }
+*/
+            return { heightData };
         }
 
-        // 適應窗口大小變化
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
+        function generateMaze(gridSize, cellSize, removeWallPercentage = 0.8, obstacleProbability = 0.1, treasureProbability = 0.1) {
+            const maze = Array(gridSize).fill().map(() => Array(gridSize).fill(1));
+            const obstacles = [];
+            const treasures = [];
+
+            const random = (array) => Array.isArray(array) ? array[Math.floor(Math.random() * array.length)] : Math.random();
+
+            function getUnvisitedNeighbors(x, y) {
+                const neighbors = [];
+                const directions = [{dx: 0, dy: -2}, {dx: 0, dy: 2}, {dx: -2, dy: 0}, {dx: 2, dy: 0}];
+                for (const dir of directions) {
+                    const nx = x + dir.dx, ny = y + dir.dy;
+                    if (nx > 0 && nx < gridSize - 1 && ny > 0 && ny < gridSize - 1 && maze[nx][ny] === 1) {
+                        neighbors.push({x: nx, y: ny});
+                    }
+                }
+                return neighbors;
+            }
+
+            function removeWall(x1, y1, x2, y2) {
+                const wx = (x1 + x2) / 2, wy = (y1 + y2) / 2;
+                maze[wy][wx] = 0;
+            }
+
+            const stack = [{x: 1, y: 1}];
+            maze[1][1] = 0;
+
+            while (stack.length) {
+                const current = stack[stack.length - 1];
+                const neighbors = getUnvisitedNeighbors(current.x, current.y);
+                if (neighbors.length) {
+                    const next = random(neighbors);
+                    removeWall(current.x, current.y, next.x, next.y);
+                    maze[next.x][next.y] = 0;
+                    stack.push(next);
+                } else {
+                    stack.pop();
+                }
+            }
+
+            for (let y = 1; y < gridSize - 1; y++) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    if (maze[x][y] === 1 && random() < removeWallPercentage) 
+                        maze[x][y] = 0;
+                }
+            }
+/*
+            for (let y = 1; y < gridSize - 1; y++) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    if (maze[x][y] === 0 && !(x === 1 && y === 1)) {
+                        if (random() < obstacleProbability && obstacles.length <=30 ) 
+                            obstacles.push({x, z: y, durability: Math.floor(random() * 3) + 1});
+                        else if (random() < treasureProbability && treasures.length <=30 ) 
+                            treasures.push({x, z: y, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+                    }
+                }
+            }
+*/
+
+            // 計算障礙物和寶箱的數量比例
+            const obstacleCount = Math.floor(gridSize*gridSize*obstacleProbability);
+            const treasureCount = Math.floor(gridSize*gridSize*treasureProbability)
+            // 生成障礙物
+            for (let i = 0; i < obstacleCount; i++) {
+                const x = Math.floor(Math.random() * gridSize);
+                const z = Math.floor(Math.random() * gridSize);        
+                obstacles.push({ x, z, durability: Math.floor(Math.random() * 3) + 1});
+            }
+
+            // 生成寶箱
+            for (let i = 0; i < treasureCount; i++) {
+                const x = Math.floor(Math.random() * gridSize);
+                const z = Math.floor(Math.random() * gridSize);        
+                const types = ['health', 'attack', 'speed', 'bow'];
+                treasures.push({x, z, type: types[Math.floor(Math.random() * 4)]});
+            }
+
+            //maze.fill(0);
+            return {maze, obstacles, treasures};
+        }
+
+        function setupScene() {
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(30, 10, 40);
+
+            const renderer = new THREE.WebGLRenderer();
             renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
 
-        // 渲染循環
-        function animate() {
-            requestAnimationFrame(animate);
-            animateParticles();
-            controls.update();
-            renderer.render(scene, camera);
-            stats.update();
+            const world = new CANNON.World();
+            world.gravity.set(0, -9.8, 0);
+            world.broadphase = new CANNON.NaiveBroadphase();
+            world.defaultContactMaterial.friction = 0.5;
+            world.defaultContactMaterial.restitution = 0.1;
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
+            scene.add(hemiLight);
+
+            const spotLight = new THREE.SpotLight(0xffffff, 800);
+            spotLight.position.set(0, 2, 0);
+            spotLight.castShadow = true;
+            spotLight.distance = 50;
+            spotLight.angle = Math.PI / 4;
+            spotLight.penumbra = 0.2;
+            spotLight.decay = 2;
+            scene.add(spotLight);
+
+            spotLight.target = new THREE.Object3D();
+            scene.add(spotLight.target);
+
+            const objectsToRemove = [];
+
+            return {scene, camera, renderer, world, spotLight, controls: null, clock: new THREE.Clock(), objectsToRemove};
         }
 
-        animate();
+        function createFloor(sceneInfo, gameInfo) {
+            gameInfo.chunkSize = 60; // 每個區塊大小（例如 20x20）
+            gameInfo.cellSize = 20; // 每個格子大小
+            gameInfo.gridSize = gameInfo.chunkSize / gameInfo.cellSize + 1; // 每個區塊的格子數（5x5）
+            gameInfo.chunks = new Map(); // 儲存活躍區塊（key: "x,z", value: { mesh, body }）
+
+            const floorTexture = textureLoader.load(ext_resource_url + '/textures/tile.jpeg');
+            floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
+            floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
+            gameInfo.floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
+        }
+
+        function generateChunk(sceneInfo, gameInfo, chunkX, chunkZ) {
+            const chunkKey = `${chunkX},${chunkZ}`;
+            if (gameInfo.chunks.has(chunkKey)) return;
+
+            const { heightData } = generateTerrain(chunkX, chunkZ, gameInfo.chunkSize, gameInfo.cellSize, gameInfo);
+            if (!heightData || heightData.length !== gameInfo.gridSize || !heightData.every(row => row.length === gameInfo.gridSize)) {
+                console.error(`Invalid heightData for chunk ${chunkKey}:`, heightData);
+                return;
+            }
+
+            // 創建網格
+            const geometry = new THREE.PlaneGeometry(gameInfo.chunkSize, gameInfo.chunkSize, gameInfo.gridSize - 1, gameInfo.gridSize - 1);
+            geometry.rotateX(-Math.PI / 2); // 將 Y 軸轉為向上
+            const vertices = geometry.attributes.position.array;
+            for (let i = 0, j = 0; i < vertices.length; i += 3, j++) {
+                const x = Math.floor(j / gameInfo.gridSize);
+                const z = j % gameInfo.gridSize;
+                vertices[i + 1] = heightData[x][z] || 0; // Y 軸高度
+            }
+            geometry.computeVertexNormals();
+
+            const chunkMesh = new THREE.Mesh(geometry, gameInfo.floorMaterial);
+            chunkMesh.position.set(
+                chunkX * gameInfo.chunkSize, // 左下角對齊
+                0,
+                chunkZ * gameInfo.chunkSize
+            );
+            chunkMesh.receiveShadow = true;
+            sceneInfo.scene.add(chunkMesh);
+
+            // 創建物理
+            try {
+                const heightfieldShape = new CANNON.Heightfield(heightData, { elementSize: gameInfo.cellSize });
+                const chunkBody = new CANNON.Body({ mass: 0, material: new CANNON.Material() });
+
+                const floorSize = gameInfo.chunkSize;
+                var offsetX = -floorSize / 2;
+                var offsetY = 0;
+                var offsetZ = -floorSize / 2;
+                var positionOffset = new CANNON.Vec3(offsetX, offsetY, offsetZ);
+
+                var angleX = -Math.PI / 2;
+                var angleY = Math.PI / 2 + Math.PI;
+                var angleZ = 0;
+
+                var q = new CANNON.Quaternion();
+                var qx = new CANNON.Quaternion();
+                qx.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), angleX);
+                var qy = new CANNON.Quaternion();
+                qy.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angleY);
+                var qz = new CANNON.Quaternion();
+                qz.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), angleZ);
+                q = qz.mult(qy).mult(qx);
+
+                chunkBody.addShape(heightfieldShape, positionOffset, q);
+                chunkBody.position.set(
+                    chunkX * gameInfo.chunkSize, // 與網格位置一致
+                    0,
+                    chunkZ * gameInfo.chunkSize
+                );
+                sceneInfo.world.addBody(chunkBody);
+                if (0){//debugPhysics) {
+                    const debugMesh = createDebugMeshFromCannonShape(chunkBody, heightfieldShape);
+                    sceneInfo.scene.add(debugMesh);
+                    gameInfo.floorDebugMesh = debugMesh;
+                }
+                console.log(`heightData:`, heightData);
+                gameInfo.chunks.set(chunkKey, { mesh: chunkMesh, body: chunkBody, heightData });
+            } catch (e) {
+                console.error(`Error creating physics for chunk ${chunkKey}:`, e);
+            }
+        }
+
+        function getTerrainHeightAt(x, z, gameInfo) {
+        
+        x = (x+gameInfo.chunkSize/2);
+        z = (z+gameInfo.chunkSize/2);
+        const chunkX = Math.floor( x / gameInfo.chunkSize);
+        const chunkZ = Math.floor( z / gameInfo.chunkSize);
+        const chunkKey = `${chunkX},${chunkZ}`;
+        const chunk = gameInfo.chunks.get(chunkKey);
+
+        if (!chunk || !chunk.heightData) {
+            console.log(`No chunk found at ${chunkKey} for position (${x}, ${z})`);
+            return 0;
+        }
+
+        // **旋轉 heightData 以匹配物理地面方向**
+        const rotatedHeightData = [];
+        for (let z = 0; z < gameInfo.gridSize; z++) {
+            const row = [];
+            for (let x = 0; x < gameInfo.gridSize; x++) {
+                row.push(chunk.heightData.at(z)?.at(x));
+            }
+            rotatedHeightData.push(row);
+        }
+        
+        //console.log(`rotatedHeightData:`, rotatedHeightData);
+
+        const localX = x - chunkX * gameInfo.chunkSize;
+        const localZ = z - chunkZ * gameInfo.chunkSize;
+        const gridXFloat = localX / gameInfo.cellSize;
+        const gridZFloat = localZ / gameInfo.cellSize;
+        const gridSize = gameInfo.gridSize; // 注意這裡不再減 1
+
+        const gz = Math.floor(gridXFloat);
+        const gx = Math.floor(gridZFloat);
+        
+        if (gx < 0 || gx >= gridSize - 1 || gz < 0 || gz >= gridSize - 1) {
+            // 超出網格邊界，返回邊界上的高度或 0
+            return 0;
+        }
+
+        const h00 = rotatedHeightData [gx][gz];
+        const h10 = rotatedHeightData [gx + 1][gz];
+        const h01 = rotatedHeightData [gx][gz + 1];
+        const h11 = rotatedHeightData [gx + 1][gz + 1];
+        
+        return h00;
+
+        const tx = gridXFloat - gx;
+        const tz = gridZFloat - gz;
+        const height = h00 * (1 - tx) * (1 - tz) +
+                       h10 * tx * (1 - tz) +
+                       h01 * (1 - tx) * tz +
+                       h11 * tx * tz;
+
+        return height;
+    }
+        
+        function createWalls(sceneInfo, gameInfo) {
+            const wallTexture = textureLoader.load(ext_resource_url + '/textures/wall.png');
+            wallTexture.wrapS = wallTexture.wrapT = THREE.RepeatWrapping;
+            wallTexture.repeat.set(1, 1);
+
+            const wallGeometry = new THREE.BoxGeometry(gameInfo.cellSize, gameInfo.cellSize, gameInfo.cellSize);
+            const wallMaterial = new THREE.MeshStandardMaterial({ map: wallTexture });
+            const wallBoxes = [];
+            const wallMeshes = []; // 新增：存儲牆的網格
+
+            for (let i = 0; i < gameInfo.maze.length; i++) {
+                for (let j = 0; j < gameInfo.maze[i].length; j++) {
+                    if (gameInfo.maze[i][j] === 1) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        const posX = i * gameInfo.cellSize + gameInfo.cellSize / 2;
+                        const posZ = j * gameInfo.cellSize + gameInfo.cellSize / 2;
+                        const posY = getTerrainHeightAt(posX, posZ, gameInfo) + gameInfo.cellSize / 3;
+                        wall.position.set(posX, posY, posZ);
+                        wall.castShadow = wall.receiveShadow = true;
+                        sceneInfo.scene.add(wall);
+                        wallMeshes.push(wall); // 保存網格
+
+                        const wallShape = new CANNON.Box(new CANNON.Vec3(gameInfo.cellSize / 2, gameInfo.cellSize / 2, gameInfo.cellSize / 2));
+                        const wallBody = new CANNON.Body({ mass: 0 });
+                        wallBody.addShape(wallShape);
+                        wallBody.position.set(posX, posY, posZ);
+                        sceneInfo.world.addBody(wallBody);
+                        wallBoxes.push(wallBody);
+                    }
+                }
+            }
+            gameInfo.wallMeshes = wallMeshes; // 保存到 gameInfo
+            return wallBoxes;
+        }
+
+        function createObstacles(sceneInfo, gameInfo) {
+            const obstacleTexture = textureLoader.load(ext_resource_url + '/textures/obstacle.png');
+            obstacleTexture.wrapS = obstacleTexture.wrapT = THREE.RepeatWrapping;
+            obstacleTexture.repeat.set(1, 1);
+
+            const obstacleGeometry = new THREE.BoxGeometry(gameInfo.cellSize / 2, gameInfo.cellSize / 2, gameInfo.cellSize / 2);
+            const obstacleMeshes = [], obstacleBodies = [];
+            const keyIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
+            let doorIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
+            while (doorIndex === keyIndex) doorIndex = Math.floor(Math.random() * gameInfo.obstacles.length);
+
+            let keyPosition, doorPosition;
+
+            gameInfo.obstacles.forEach((obstacle, index) => {
+                const material = new THREE.MeshStandardMaterial({map: obstacleTexture});
+                const mesh = new THREE.Mesh(obstacleGeometry, material);
+                const posX = obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posZ = obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2;
+
+                // 從地形網格獲取高度
+                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + gameInfo.cellSize / 4;
+
+                mesh.position.set(posX, posY, posZ);
+                mesh.castShadow = mesh.receiveShadow = true;
+                mesh.userData = {
+                    durability: obstacle.durability,
+                    health: obstacle.durability * 10,
+                    hidesKey: index === keyIndex,
+                    hidesDoor: index === doorIndex
+                };
+                sceneInfo.scene.add(mesh);
+
+                const shape = new CANNON.Box(new CANNON.Vec3(gameInfo.cellSize / 4, gameInfo.cellSize / 4, gameInfo.cellSize / 4));
+                const body = new CANNON.Body({mass: 0});
+                body.addShape(shape);
+                body.position.set(posX, posY, posZ);
+                sceneInfo.world.addBody(body);
+                obstacleMeshes.push(mesh);
+                obstacleBodies.push(body);
+
+                if (index === keyIndex) keyPosition = mesh.position.clone();
+                if (index === doorIndex) doorPosition = mesh.position.clone();
+            });
+
+            const keyGeometry = new THREE.CylinderGeometry(0.2, 0.2, 1, 16);
+            const keyMaterial = new THREE.MeshBasicMaterial({color: 0xffff00});
+            const key = new THREE.Mesh(keyGeometry, keyMaterial);
+            key.position.copy(keyPosition);
+            key.visible = false;
+            sceneInfo.scene.add(key);
+
+            const doorGeometry = new THREE.BoxGeometry(1, 2, 1);
+            const doorMaterial = new THREE.MeshBasicMaterial({color: 0x0000ff, side: THREE.DoubleSide});
+            const door = new THREE.Mesh(doorGeometry, doorMaterial);
+            door.position.copy(doorPosition);
+            door.visible = false;
+            sceneInfo.scene.add(door);
+
+            return {obstacleMeshes, obstacleBodies, key, door};
+        }
+
+        function createTreasures(sceneInfo, gameInfo) {
+            const treasureTextures = {
+                health: textureLoader.load(ext_resource_url + '/textures/treasure_health.png'),
+                attack: textureLoader.load(ext_resource_url + '/textures/treasure_attack.png'),
+                speed: textureLoader.load(ext_resource_url + '/textures/treasure_speed.png'),
+                bow: textureLoader.load(ext_resource_url + '/textures/treasure_bow.png')
+            };
+            for (let type in treasureTextures) {
+                treasureTextures[type].wrapS = treasureTextures[type].wrapT = THREE.RepeatWrapping;
+                treasureTextures[type].repeat.set(1, 1);
+            }
+
+            const geometry = new THREE.SphereGeometry(gameInfo.cellSize / 4, 32, 32);
+            gameInfo.treasures.forEach(treasure => {
+                const material = new THREE.MeshStandardMaterial({map: treasureTextures[treasure.type]});
+                const mesh = new THREE.Mesh(geometry, material);
+                const posX = treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posZ = treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2;
+
+                // 從地形網格獲取高度
+                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + gameInfo.cellSize / 4;
+
+                mesh.position.set(posX, posY, posZ);
+                mesh.castShadow = mesh.receiveShadow = true;
+                sceneInfo.scene.add(mesh);
+                gameInfo.treasureMeshes.set(treasure, mesh);
+            });
+        }
+
+        function createPlayer(sceneInfo) {
+            let player = null;
+            const gltfLoader = new GLTFLoader();
+            gltfLoader.load(ext_resource_url + '/3d_module/RobotExpressive.glb', (gltf) => {
+                const soldier = gltf.scene;
+                soldier.scale.set(0.5, 0.5, 0.5);
+                const startX = 1, startZ = 1; // 初始格子位置
+                const posX = startX * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
+                const posZ = startZ * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
+                const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5 || 5;
+                soldier.position.set(posX, posY, posZ);
+
+                const originalMaterials = new Map();
+                soldier.traverse(child => {
+                    if (child.isMesh) {
+                        child.castShadow = child.receiveShadow = true;
+                        originalMaterials.set(child, child.material.clone());
+                    }
+                });
+                sceneInfo.scene.add(soldier);
+
+                // 使用 CANNON.Box 替代 Sphere
+                //const shape = new CANNON.Box(new CANNON.Vec3(0.5, 1, 0.5));
+                //const body = new CANNON.Body({ mass: 5 });
+                const shape = new CANNON.Sphere(1);
+                const body = new CANNON.Body({mass: 5});
+
+                body.addShape(shape);
+                body.position.set(posX, posY + 10, posZ); // 物理體略高於地形避免嵌入
+                body.linearDamping = 0.9;
+                body.angularDamping = 0.0;
+                sceneInfo.world.addBody(body);
+          
+                const mixer = new THREE.AnimationMixer(soldier);
+                const animations = gltf.animations;
+                const actions = {
+                    idle: mixer.clipAction(animations[0]),
+                    run: mixer.clipAction(animations[3]),
+                    attack: mixer.clipAction(animations[5])
+                };
+                actions.idle.play();
+
+                const healthCanvas = document.createElement('canvas');
+                healthCanvas.width = 128;
+                healthCanvas.height = 16;
+                const healthCtx = healthCanvas.getContext('2d');
+                healthCtx.fillStyle = '#00ff00';
+                healthCtx.fillRect(0, 0, 128, 16);
+
+                const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(document.createElement('canvas'))}));
+                backgroundSprite.scale.set(2, 0.25, 1);
+                backgroundSprite.position.set(0, 5, 0);
+                soldier.add(backgroundSprite);
+
+                const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(healthCanvas)}));
+                healthSprite.scale.set(2, 0.25, 1);
+                healthSprite.position.set(0, 5, 0);
+                soldier.add(healthSprite);
+
+                player = {
+                    soldier, body, mixer, actions, currentAction: actions.idle, targetAngle: 0, health: 100, maxHealth: 100,
+                    isAttacking: false, attackCooldown: 0, baseAttackPower: 10, attackPowerBoost: 0, attackPowerBoostEndTime: 0,
+                    maxAttackCooldown: 0.2, healthBar: healthSprite, healthBarBackground: backgroundSprite, healthCanvas, healthCtx,
+                    lastHealTime: 0, healInterval: 1, isFlashing: false, flashDuration: 0.1, flashTimer: 0, originalMaterials,
+                    hasKey: false, faceMouseTimer: 0, shiftToggle: false, baseSoldierSpeed: 10, speedMultiplier: 1,
+                    speedPowerUpEndTime: 0, attackTriggeredByMouse: false, hasBow: true, arrowCount: 1
+                };
+                // 調試可視化
+                if (debugPhysics) 
+                {
+                    const debugMesh = createDebugMeshFromCannonShape(body, shape);
+                    sceneInfo.scene.add(debugMesh);
+                    player.debugMesh = debugMesh; // 保存以便後續更新
+                }
+            });
+            return () => player;
+        }
+
+        function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
+            const player = playerInfo.getPlayer();
+            if (!player || !player.soldier || !player.body) return; // 確保玩家和物理體已初始化
+
+            const playerPosition = player.soldier.position;
+            const chunkX = Math.floor(playerPosition.x / gameInfo.chunkSize);
+            const chunkZ = Math.floor(playerPosition.z / gameInfo.chunkSize);
+            const renderDistance = 1;
+
+            /*
+            // 從中心點向外擴展
+            for (let distance = 0; distance <= renderDistance; distance++) {
+                // 遍歷當前層的所有區塊
+                for (let dx = -distance; dx <= distance; dx++) {
+                    for (let dz = -distance; dz <= distance; dz++) {
+                        // 只生成邊界上的區塊（即 max(|dx|, |dz|) == distance）
+                        if (Math.max(Math.abs(dx), Math.abs(dz)) === distance || distance === 0) {
+                            const cx = chunkX + dx;
+                            const cz = chunkZ + dz;
+                            generateChunk(sceneInfo, gameInfo, cx, cz);
+                        }
+                    }
+                }
+            }*/
+
+
+            const maxDistance = renderDistance + 1;
+            for (const [key, chunk] of gameInfo.chunks) {
+                const [cx, cz] = key.split(',').map(Number);
+                const distX = Math.abs(cx - chunkX);
+                const distZ = Math.abs(cz - chunkZ);
+                if (distX > maxDistance || distZ > maxDistance) {
+                    sceneInfo.scene.remove(chunk.mesh);
+                    sceneInfo.world.removeBody(chunk.body);
+                    gameInfo.chunks.delete(key);
+                }
+            }
+
+            sceneInfo.world.step(delta);
+            player.soldier.position.copy(player.body.position);
+            player.soldier.position.y -= 1;
+            player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
+
+            const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
+            console.log(
+        player.body.position.y.toFixed(2),
+        terrainHeight.toFixed(2),
+        (player.body.position.y - terrainHeight).toFixed(2)
+    );            /*
+            const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
+            const maxHeightAboveTerrain = 5;
+            const minHeightAboveTerrain = 2;
+            if (player.body.position.y > terrainHeight + maxHeightAboveTerrain) {
+                player.body.position.y = terrainHeight + maxHeightAboveTerrain;
+                player.body.velocity.y = 0;
+            } else if (player.body.position.y < terrainHeight + minHeightAboveTerrain) {
+                player.body.position.y = terrainHeight + minHeightAboveTerrain;
+                player.body.velocity.y = 0;
+            }
+*/
+            if (debugPhysics && player.debugMesh) {
+                player.debugMesh.position.copy(player.body.position);
+                player.debugMesh.quaternion.copy(player.body.quaternion);
+            }
+
+            if (player.isFlashing) {
+                player.flashTimer -= delta;
+                const flashIntensity = Math.abs(Math.sin(player.flashTimer * Math.PI * 10));
+                player.soldier.traverse(child => child.isMesh && child.material.color.setRGB(1, flashIntensity / 2, flashIntensity / 2));
+                if (player.flashTimer <= 0) {
+                    player.isFlashing = false;
+                    player.soldier.traverse(child => child.isMesh && player.originalMaterials.has(child) && (child.material = player.originalMaterials.get(child).clone()));
+                }
+            }
+
+            const rotationSpeed = 5;
+            const soldierSpeed = player.baseSoldierSpeed * player.speedMultiplier;
+            const moveDirection = new THREE.Vector3();
+            let isRotating = false;
+
+            const currentTime = Date.now();
+            if (player.attackPowerBoostEndTime && currentTime > player.attackPowerBoostEndTime) {
+                player.attackPowerBoost = 0;
+                player.attackPowerBoostEndTime = 0;
+            }
+            if (player.speedPowerUpEndTime && currentTime > player.speedPowerUpEndTime) {
+                player.speedMultiplier = 1;
+                player.speedPowerUpEndTime = 0;
+            }
+
+            if (gameMaster.cameraMode === 'firstPerson') {
+                if (inputInfo.keys.joystick.y !== 0) {
+                    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.soldier.quaternion).normalize();
+                    moveDirection.add(forward.multiplyScalar(-inputInfo.keys.joystick.y));
+                }
+                if (inputInfo.keys.joystick.x !== 0) {
+                    player.soldier.rotation.y -= inputInfo.keys.joystick.x * rotationSpeed * delta;
+                    isRotating = true;
+                }
+            } else {
+                const forward = new THREE.Vector3();
+                const left = new THREE.Vector3();
+                sceneInfo.camera.getWorldDirection(forward);
+                forward.y = 0;
+                forward.normalize();
+                left.copy(forward).applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2).normalize();
+
+                if (inputInfo.keys.w) moveDirection.add(forward);
+                if (inputInfo.keys.s) moveDirection.sub(forward);
+                if (inputInfo.keys.a) moveDirection.sub(left);
+                if (inputInfo.keys.d) moveDirection.add(left);
+                if (inputInfo.keys.joystick.x || inputInfo.keys.joystick.y) {
+                    moveDirection.add(left.multiplyScalar(inputInfo.keys.joystick.x)).add(forward.multiplyScalar(-inputInfo.keys.joystick.y));
+                }
+                moveDirection.normalize();
+            }
+
+            if (gameMaster.cameraMode === 'firstPerson') {
+                const forward = new THREE.Vector3();
+                const left = new THREE.Vector3();
+                sceneInfo.camera.getWorldDirection(forward);
+                forward.y = 0;
+                forward.normalize();
+                left.copy(forward).applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2).normalize();
+
+                if (inputInfo.keys.w) moveDirection.add(forward);
+                if (inputInfo.keys.s) moveDirection.sub(forward);
+                if (inputInfo.keys.shift || inputInfo.keys.mouseLeft) {
+                    if (inputInfo.keys.a) moveDirection.sub(left);
+                    if (inputInfo.keys.d) moveDirection.add(left);
+                } else {
+                    if (inputInfo.keys.a) {
+                        player.soldier.rotation.y += rotationSpeed * delta;
+                        isRotating = true;
+                    }
+                    if (inputInfo.keys.d) {
+                        player.soldier.rotation.y -= rotationSpeed * delta;
+                        isRotating = true;
+                    }
+                }
+                if (inputInfo.keys.mouseLeft) {
+                    let mv = Math.min(Math.max(inputInfo.keys.mouseMovementX, -32), 32);
+                    player.soldier.rotation.y -= mv * 0.01;
+                }
+            }
+
+            const isMoving = moveDirection.lengthSq() > 0 || isRotating;
+            if (player.attackCooldown > 0) player.attackCooldown -= delta;
+
+            if (player.shiftToggle && gameMaster.cameraMode !== 'firstPerson') {
+                player.faceMouseTimer -= delta;
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(inputInfo.mouse, sceneInfo.camera);
+                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -player.soldier.position.y);
+                const intersect = new THREE.Vector3();
+                raycaster.ray.intersectPlane(plane, intersect);
+                const direction = intersect.sub(player.soldier.position).normalize();
+                direction.y = 0;
+                const targetAngle = Math.atan2(direction.x, direction.z);
+                player.soldier.rotation.y += getShortestAngleDifference(player.soldier.rotation.y, targetAngle) * rotationSpeed * delta;
+            }
+
+            if (!sceneInfo.activeArrows) sceneInfo.activeArrows = [];
+
+            if ((inputInfo.keys.space || player.attackTriggeredByMouse) && player.attackCooldown <= 0) {
+                player.isAttacking = true;
+                if (player.currentAction !== player.actions.attack) {
+                    player.currentAction.fadeOut(0.2);
+                    player.actions.attack.reset().fadeIn(0.2).play();
+                    player.currentAction = player.actions.attack;
+                }
+                player.attackCooldown = player.maxAttackCooldown;
+                player.attackTriggeredByMouse = false;
+
+                const playerForward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.soldier.quaternion).normalize();
+
+                if (player.hasBow && player.arrowCount > 0) {
+                    player.arrowCount = player.arrowCount-arrow_sub1;
+                    const arrowGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+                    const arrowMaterial = new THREE.MeshBasicMaterial({color: 0xFF0000});
+                    const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial);
+                    arrow.position.copy(player.soldier.position).add(playerForward.clone().multiplyScalar(1)).add(new THREE.Vector3(0, 1, 0));
+                    const direction = new THREE.Vector3(playerForward.x, 0, playerForward.z).normalize();
+                    const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+                    arrow.quaternion.multiply(quaternion);
+                    sceneInfo.scene.add(arrow);
+
+                    const arrowBody = new CANNON.Body({mass: 0.1});
+                    arrowBody.addShape(new CANNON.Box(new CANNON.Vec3(0.025, 0.5, 0.025)));
+                    arrowBody.position.copy(arrow.position);
+                    arrowBody.quaternion.copy(arrow.quaternion);
+                    const arrowSpeed = 60;
+                    arrowBody.velocity.set(playerForward.x * arrowSpeed, 0, playerForward.z * arrowSpeed);
+                    arrowBody.hasHit = false;
+                    sceneInfo.world.addBody(arrowBody);
+
+                    sceneInfo.activeArrows.push({mesh: arrow, body: arrowBody});
+
+                    arrowBody.addEventListener('collide', (e) => {
+                        if (arrowBody.hasHit) return;
+                        const target = e.body;
+
+                        enemyInfo.enemies.forEach((enemy, idx) => {
+                            if (enemy.body === target) {
+                                enemy.health -= player.baseAttackPower + player.attackPowerBoost;
+                                arrowBody.hasHit = true;
+                                sceneInfo.objectsToRemove.push({mesh: arrow, body: arrowBody});
+                                if (enemy.health <= 0) {
+                                    sceneInfo.objectsToRemove.push({mesh: enemy, body: enemy.body, enemyIdx: idx});
+                                }
+                            }
+                        });
+
+                        const obstacleIdx = gameInfo.obstacleBodies.indexOf(target);
+                        if (obstacleIdx !== -1) {
+                            const obstacle = gameInfo.obstacleMeshes[obstacleIdx];
+                            obstacle.userData.health -= player.baseAttackPower + player.attackPowerBoost;
+                            arrowBody.hasHit = true;
+                            sceneInfo.objectsToRemove.push({mesh: arrow, body: arrowBody});
+                            if (obstacle.userData.health <= 0) {
+                                if (obstacle.userData.hidesKey) gameInfo.key.visible = true;
+                                if (obstacle.userData.hidesDoor) gameInfo.door.visible = true;
+                                sceneInfo.objectsToRemove.push({mesh: obstacle, body: target, obstacleIdx});
+                            }
+                        }
+                    });
+                } else {
+                    enemyInfo.enemies.forEach((enemy, idx) => {
+                        const distance = player.soldier.position.distanceTo(enemy.position);
+                        if (distance < 3) {
+                            const enemyDirection = enemy.position.clone().sub(player.soldier.position).normalize();
+                            const angleDeg = Math.acos(playerForward.dot(enemyDirection)) * 180 / Math.PI;
+                            if (angleDeg <= 60) {
+                                enemy.health -= player.baseAttackPower + player.attackPowerBoost;
+                                if (enemy.health <= 0) {
+                                    sceneInfo.objectsToRemove.push({mesh: enemy, body: enemy.body, enemyIdx: idx});
+                                }
+                            }
+                        }
+                    });
+
+                    gameInfo.obstacleMeshes.forEach((obstacle, idx) => {
+                        const distance = player.soldier.position.distanceTo(obstacle.position);
+                        if (distance < 3) {
+                            const obstacleDirection = obstacle.position.clone().sub(player.soldier.position).normalize();
+                            const angleDeg = Math.acos(playerForward.dot(obstacleDirection)) * 180 / Math.PI;
+                            if (angleDeg <= 60) {
+                                obstacle.userData.health -= player.baseAttackPower + player.attackPowerBoost;
+                                if (obstacle.userData.health <= 0) {
+                                    if (obstacle.userData.hidesKey) gameInfo.key.visible = true;
+                                    if (obstacle.userData.hidesDoor) gameInfo.door.visible = true;
+                                    sceneInfo.objectsToRemove.push({mesh: obstacle, body: gameInfo.obstacleBodies[idx], obstacleIdx: idx});
+                                }
+                            }
+                        }
+                    });
+                }
+
+                setTimeout(() => {
+                    player.isAttacking = false;
+                    if (!isMoving && player.currentAction !== player.actions.idle) {
+                        player.currentAction.fadeOut(0.2);
+                        player.actions.idle.reset().fadeIn(0.2).play();
+                        player.currentAction = player.actions.idle;
+                    }
+                }, player.maxAttackCooldown * 500);
+            } else if (isMoving && !player.isAttacking) {
+                if (gameMaster.cameraMode !== 'firstPerson') {
+                    const angle = Math.atan2(moveDirection.x, moveDirection.z);
+                    player.soldier.rotation.y += getShortestAngleDifference(player.soldier.rotation.y, angle) * rotationSpeed * delta;
+                }
+                player.body.velocity.set(moveDirection.x * soldierSpeed, player.body.velocity.y, moveDirection.z * soldierSpeed);
+                if (player.currentAction !== player.actions.run) {
+                    player.currentAction.fadeOut(0.2);
+                    player.actions.run.reset().fadeIn(0.2).play();
+                    player.currentAction = player.actions.run;
+                }
+            } else if (!player.isAttacking) {
+                if (player.currentAction !== player.actions.idle) {
+                    player.currentAction.fadeOut(0.2);
+                    player.actions.idle.reset().fadeIn(0.2).play();
+                    player.currentAction = player.actions.idle;
+                }
+                player.body.velocity.set(0, player.body.velocity.y, 0);
+            }
+
+            for (let i = sceneInfo.activeArrows.length - 1; i >= 0; i--) {
+                const arrow = sceneInfo.activeArrows[i];
+                arrow.mesh.position.copy(arrow.body.position);
+                arrow.mesh.quaternion.copy(arrow.body.quaternion);
+                if (arrow.body.velocity.length() < 0.1 && !arrow.body.hasHit) {
+                    sceneInfo.objectsToRemove.push({mesh: arrow.mesh, body: arrow.body});
+                    sceneInfo.activeArrows.splice(i, 1);
+                }
+            }
+
+            gameInfo.treasures.forEach((treasure, i) => {
+                const mesh = gameInfo.treasureMeshes.get(treasure);
+                if (mesh && player.soldier.position.distanceTo(mesh.position) < 1.25) {
+                    switch (treasure.type) {
+                        case 'health': player.health = Math.min(player.health + 10, player.maxHealth); break;
+                        case 'attack': player.attackPowerBoost = 5; player.attackPowerBoostEndTime = currentTime + 10000; break;
+                        case 'speed': player.speedMultiplier = 1.5; player.speedPowerUpEndTime = currentTime + 10000; break;
+                        case 'bow': player.hasBow = true; player.arrowCount += 50; break;
+                    }
+                    sceneInfo.scene.remove(mesh);
+                    gameInfo.treasureMeshes.delete(treasure);
+                    gameInfo.treasures.splice(i, 1);
+                }
+            });
+
+            if ( gameInfo.key && gameInfo.key.visible && player.soldier.position.distanceTo(gameInfo.key.position) < 2) {
+                player.hasKey = true;
+                gameInfo.key.visible = false;
+            }
+            if ( gameInfo.door && gameInfo.door.visible && player.hasKey && player.soldier.position.distanceTo(gameInfo.door.position) < 2) {
+                gameMaster.newGame = true;
+            }
+
+            player.mixer.update(delta);
+            const spotlightDirection = new THREE.Vector3(0, 5, -15).applyQuaternion(player.soldier.quaternion).normalize();
+            sceneInfo.spotLight.position.copy(player.soldier.position).add(spotlightDirection.multiplyScalar(0)).add(new THREE.Vector3(0, 20, 0));
+            sceneInfo.spotLight.target.position.copy(player.soldier.position).add(new THREE.Vector3(0, 0, 10).applyQuaternion(player.soldier.quaternion));
+            sceneInfo.scene.add(sceneInfo.spotLight.target);
+
+            const elapsedTime = sceneInfo.clock.getElapsedTime();
+            if (elapsedTime - player.lastHealTime >= player.healInterval && player.health < player.maxHealth) {
+                player.health += 1;
+                player.lastHealTime = elapsedTime;
+            }
+
+            const healthPercentage = player.health / player.maxHealth;
+            player.healthCtx.clearRect(0, 0, 128, 16);
+            player.healthCtx.fillStyle = healthPercentage > 0.3 ? '#00ff00' : '#ff0000';
+            player.healthCtx.fillRect(0, 0, 128 * healthPercentage, 16);
+            player.healthBar.material.map.needsUpdate = true;
+
+            if (gameMaster.cameraMode === 'firstPerson') {
+                sceneInfo.camera.position.copy(player.soldier.position).add(new THREE.Vector3(0, 2, 0));
+                sceneInfo.camera.rotation.set(0, 0, 0);
+                sceneInfo.camera.rotation.y = player.soldier.rotation.y + Math.PI;
+            } else if (gameMaster.cameraMode === 'topDown') {
+                const offsetY = inputInfo.cameraOffsetY(); // 動態獲取高度偏移
+                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z);
+                sceneInfo.camera.lookAt(player.soldier.position);
+            } else if (sceneInfo.controls) {
+                sceneInfo.controls.target.copy(player.soldier.position);
+                sceneInfo.controls.update();
+            }
+
+            document.getElementById('debug').innerText = `Player HP: ${player.health}\nArrows: ${player.arrowCount}\nAttack Power: ${player.baseAttackPower + player.attackPowerBoost}\nSpeed: ${player.baseSoldierSpeed * player.speedMultiplier}`;
+        }
+
+        function spawnEnemy(playerInfo, sceneInfo, gameInfo, enemyInfo, maxEnemies) {
+            if (enemyInfo.enemies.length >= maxEnemies) return;
+
+            const gltfLoader = new GLTFLoader();
+            gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
+                const enemy = gltf.scene;
+                enemy.scale.set(0.5, 0.5, 0.5);
+                const player = playerInfo.getPlayer();
+                if (!player || !player.soldier || !player.body) return; // 確保玩家和物理體已初始化
+                const playerPosition = player.soldier.position;      
+                const spawnX = (Math.floor(Math.random() - 0.5) * gameInfo.gridSize);
+                const spawnZ = (Math.floor(Math.random() - 0.5) * gameInfo.gridSize);
+                const posX = playerPosition.x + spawnX * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posZ = playerPosition.z + spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2;
+                const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5;
+                enemy.position.set(posX, posY, posZ);
+                enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
+                sceneInfo.scene.add(enemy);
+
+                // 預計算邊界框
+                enemy.traverse(child => {
+                    if (child.isMesh && child.geometry) {
+                        child.geometry.computeBoundingBox(); // 為每個 Mesh 的幾何體計算邊界框
+                    }
+                });
+                enemy.boundingBox = new THREE.Box3().setFromObject(enemy); // 為整個模型生成邊界框
+
+                const shape = new CANNON.Sphere(1); // 或使用 CANNON.Box
+                const body = new CANNON.Body({ mass: 5 });
+                body.addShape(shape);
+                body.position.set(posX, posY + 1, posZ);
+                body.linearDamping = 0.9;
+                body.angularDamping = 0.0;
+                sceneInfo.world.addBody(body);
+
+                const mixer = new THREE.AnimationMixer(enemy);
+                const animations = gltf.animations;
+                const actions = {
+                    idle: mixer.clipAction(animations[0]),
+                    run: mixer.clipAction(animations[3]),
+                    attack: mixer.clipAction(animations[5])
+                };
+                actions.run.play();
+
+                const healthCanvas = document.createElement('canvas');
+                healthCanvas.width = 128;
+                healthCanvas.height = 16;
+                const healthCtx = healthCanvas.getContext('2d');
+                healthCtx.fillStyle = '#00ff00';
+                healthCtx.fillRect(0, 0, 128, 16);
+
+                const backgroundSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(document.createElement('canvas')) }));
+                backgroundSprite.scale.set(2, 0.25, 1);
+                backgroundSprite.position.set(0, 5, 0);
+                enemy.add(backgroundSprite);
+
+                const healthSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(healthCanvas) }));
+                healthSprite.scale.set(2, 0.25, 1);
+                healthSprite.position.set(0, 5, 0);
+                enemy.add(healthSprite);
+
+                enemy.body = body;
+                enemy.mixer = mixer;
+                enemy.actions = actions;
+                enemy.currentAction = actions.run;
+                enemy.targetPosition = getRandomTarget(gameInfo.heightData, gameInfo.gridSize, gameInfo.cellSize);
+                enemy.health = 50;
+                enemy.maxHealth = 50;
+                enemy.isAttacking = false;
+                enemy.attackCooldown = 0;
+                enemy.healthBar = healthSprite;
+                enemy.healthBarBackground = backgroundSprite;
+                enemy.healthCanvas = healthCanvas;
+                enemy.healthCtx = healthCtx;
+                enemy.patrolTimer = 0;
+                enemyInfo.enemies.push(enemy);
+            });
+        }
+
+        function updateEnemies(sceneInfo, enemyInfo, playerInfo, gameInfo, delta, inputInfo) {
+            const player = playerInfo.getPlayer();
+            if (!player || !player.soldier) return;
+
+            const renderDistance = globalRenderDistance;
+            const playerPosition = player.soldier.position;
+
+            // 定義並初始化視錐對象
+            const frustum = new THREE.Frustum();
+            frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(
+                gameMaster.sceneInfo.camera.projectionMatrix, 
+                gameMaster.sceneInfo.camera.matrixWorldInverse
+            ));
+
+            const idleRange = 2, attackRange = 3, patrolSpeed = 2, chaseSpeed = 5, rotationSpeed = 5, detectionRange = 15, fieldOfView = Math.PI * 2 / 3;
+
+            const enemiesToRemove = [];
+            enemyInfo.enemies.forEach((enemy, idx) => {
+                if (!enemy.mixer) return;
+                const yThreshold = -5; // 設定 Y 軸閾值
+                // 檢查敵人的 Y 位置
+                const enemyY = enemy.position.y;
+                if (enemyY < yThreshold) {
+                    //enemiesToRemove.push({mesh: enemy, body: enemy.body, enemyIdx: idx});
+                    sceneInfo.objectsToRemove.push({mesh: enemy, body: enemy.body, enemyIdx: idx});
+                    // 敵人 Y 值低於閾值，移除
+                    console.log(`Removing enemy at (${enemy.position.x}, ${enemyY}, ${enemy.position.z}) due to low Y value`);
+                    return;
+                }
+
+                // 更新位置
+                enemy.mixer.update(delta);
+                enemy.position.copy(enemy.body.position);
+                enemy.position.y -= 1;
+/*
+                // 校正 Y 軸位置
+                const terrainHeight = getTerrainHeightAt(enemy.body.position.x, enemy.body.position.z, gameInfo);
+                const maxHeightAboveTerrain = 5;
+                const minHeightAboveTerrain = 2;
+                if (enemy.body.position.y > terrainHeight + maxHeightAboveTerrain) {
+                    enemy.body.position.y = terrainHeight + maxHeightAboveTerrain;
+                    enemy.body.velocity.y = 0;
+                } else if (enemy.body.position.y < terrainHeight + minHeightAboveTerrain) {
+                    enemy.body.position.y = terrainHeight + minHeightAboveTerrain;
+                    enemy.body.velocity.y = 0;
+                }
+*/
+                // 距離和視錐檢查
+                const inRange = isWithinRenderDistance(enemy.position, playerPosition, renderDistance);
+                enemy.boundingBox.setFromObject(enemy); // 動態更新邊界框
+                const inFrustum = frustum.intersectsBox(enemy.boundingBox);
+                enemy.visible = inRange && inFrustum;
+                enemy.healthBar.visible = enemy.visible && enemy.healthBarBackground.visible;
+                enemy.healthBarBackground.visible = enemy.visible;
+
+                if (!enemy.visible) return;
+
+                // 檢查是否在渲染距離內
+                const shouldRender = isWithinRenderDistance(enemy.position, playerPosition, renderDistance);
+                enemy.visible = shouldRender;
+                enemy.healthBar.visible = shouldRender && enemy.healthBarBackground.visible; // 只在可見且靠近時顯示健康條
+                enemy.healthBarBackground.visible = shouldRender;
+
+                if (!shouldRender) return; // 若不可見，跳過後續邏輯更新以節省 CPU
+
+                if (enemy.attackCooldown > 0) enemy.attackCooldown -= delta;
+
+                const distanceToPlayer = enemy.position.distanceTo(playerPosition);
+                enemy.healthBar.visible = enemy.visible && distanceToPlayer < attackRange;
+
+                if (distanceToPlayer <= attackRange && enemy.attackCooldown <= 0) {
+                    enemy.isAttacking = true;
+                    if (enemy.currentAction !== enemy.actions.attack) {
+                        enemy.currentAction.fadeOut(0.2);
+                        enemy.actions.attack.reset().fadeIn(0.2).play();
+                        enemy.currentAction = enemy.actions.attack;
+                    }
+                    enemy.attackCooldown = 2;
+                    player.health -= 10;
+                    player.isFlashing = true;
+                    player.flashTimer = player.flashDuration;
+
+                    setTimeout(() => {
+                        enemy.isAttacking = false;
+                        if (canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && enemy.currentAction !== enemy.actions.run) {
+                            enemy.currentAction.fadeOut(0.2);
+                            enemy.actions.run.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.actions.run;
+                        } else if (distanceToPlayer <= idleRange && enemy.currentAction !== enemy.actions.idle) {
+                            enemy.currentAction.fadeOut(0.2);
+                            enemy.actions.idle.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.actions.idle;
+                        }
+                    }, 700);
+                } else if (!enemy.isAttacking) {
+                    if (distanceToPlayer <= idleRange) {
+                        if (enemy.currentAction !== enemy.actions.idle) {
+                            enemy.currentAction.fadeOut(0.2);
+                            enemy.actions.idle.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.actions.idle;
+                        }
+                        enemy.body.velocity.set(0, enemy.body.velocity.y, 0);
+                    } else if (canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
+                        enemy.targetPosition = player.soldier.position.clone();
+                        enemy.isChasing = true;
+                        const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
+                        enemy.rotation.y += getShortestAngleDifference(enemy.rotation.y, Math.atan2(direction.x, direction.z)) * rotationSpeed * delta;
+                        enemy.body.velocity.set(direction.x * chaseSpeed, enemy.body.velocity.y, direction.z * chaseSpeed);
+                        if (enemy.currentAction !== enemy.actions.run) {
+                            enemy.currentAction.fadeOut(0.2);
+                            enemy.actions.run.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.actions.run;
+                        }
+                    } else {
+                        enemy.isChasing = false;
+                        enemy.patrolTimer -= delta;
+                        if (enemy.patrolTimer <= 0 || enemy.position.distanceTo(enemy.targetPosition) < 1) {
+                            enemy.targetPosition = getRandomTarget(gameInfo.heightData, gameInfo.gridSize, gameInfo.cellSize);
+                            enemy.patrolTimer = 5;
+                        }
+                        const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
+                        enemy.rotation.y += getShortestAngleDifference(enemy.rotation.y, Math.atan2(direction.x, direction.z)) * rotationSpeed * delta;
+                        enemy.body.velocity.set(direction.x * patrolSpeed, enemy.body.velocity.y, direction.z * patrolSpeed);
+                        if (enemy.currentAction !== enemy.actions.run) {
+                            enemy.currentAction.fadeOut(0.2);
+                            enemy.actions.run.reset().fadeIn(0.2).play();
+                            enemy.currentAction = enemy.actions.run;
+                        }
+                    }
+                }
+
+                const healthPercentage = enemy.health / enemy.maxHealth;
+                enemy.healthCtx.clearRect(0, 0, 128, 16);
+                enemy.healthCtx.fillStyle = healthPercentage > 0.3 ? '#00ff00' : '#ff0000';
+                enemy.healthCtx.fillRect(0, 0, 128 * healthPercentage, 16);
+                enemy.healthBar.material.map.needsUpdate = true;
+            });
+
+            enemiesToRemove.forEach(obj => {
+                sceneInfo.scene.remove(obj.mesh);
+                sceneInfo.world.remove(obj.body);
+                if (obj.enemyIdx !== undefined) enemyInfo.enemies.splice(obj.enemyIdx, 1);
+            });
+
+        }
+
+        function canSeePlayer(enemy, playerSoldier, obstacleBodies, fieldOfView) {
+            if (!playerSoldier) return false;
+
+            const enemyToPlayer = playerSoldier.position.clone().sub(enemy.position);
+            const distance = enemyToPlayer.length();
+            enemyToPlayer.normalize();
+
+            const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(enemy.quaternion);
+            forward.y = 0;
+            forward.normalize();
+            if (forward.angleTo(enemyToPlayer) > fieldOfView) return false;
+
+            const ray = new CANNON.Ray();
+            ray.from = new CANNON.Vec3(enemy.body.position.x, enemy.body.position.y, enemy.body.position.z);
+            ray.to = new CANNON.Vec3(playerSoldier.position.x, playerSoldier.position.y, playerSoldier.position.z);
+
+            const result = new CANNON.RaycastResult();
+            ray.intersectBodies(obstacleBodies, result);
+
+            return !result.hasHit || result.distance > distance;
+        }
+
+        function alertNearbyEnemies(wallBoxes, alertingEnemy, enemies, playerSoldier, alertRange) {
+
+            enemies.forEach(enemy => {
+                if (enemy === alertingEnemy || enemy.isChasing) return;
+                const distance = alertingEnemy.position.distanceTo(enemy.position);
+                if (distance <= alertRange) {
+                    if (canSeePlayer(enemy, playerSoldier, wallBoxes, Math.PI * 2 / 3)) {
+                        enemy.targetPosition = playerSoldier.position.clone();
+                        enemy.isChasing = true;
+                        console.log('Enemy alerted!');
+                    } else {
+                        enemy.targetPosition = alertingEnemy.position.clone();
+                    }
+                }
+            });
+        }
+
+        function getRandomTarget(heightData, gridSize, cellSize) {
+            const targetX = Math.floor(Math.random() * gridSize);
+            const targetZ = Math.floor(Math.random() * gridSize);
+            const posX = targetX * cellSize + cellSize / 2;
+            const posZ = targetZ * cellSize + cellSize / 2;
+            const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo);
+            return new THREE.Vector3(posX, posY, posZ);
+        }
+
+        function animate(gm) {
+            if (gm.newGame) {
+                initNewLevel(gm);
+                return;
+            }
+
+            // 開始計算 FPS
+            if (gm.stats) gm.stats.begin();
+
+            if (0){//debugPhysics && gm.gameInfo.floorDebugMesh) {
+                const floorSize = gm.gameInfo.gridSize * gm.gameInfo.cellSize;
+                // 複製位置並增加偏移
+                gm.gameInfo.floorDebugMesh.position.copy(gm.gameInfo.floorBody.position);
+                gm.gameInfo.floorDebugMesh.position.x -= floorSize/2;  // 位置 X 偏移
+                gm.gameInfo.floorDebugMesh.position.y += 0;  // 位置 Y 偏移
+                gm.gameInfo.floorDebugMesh.position.z += floorSize/2;  // 位置 Z 偏移
+
+                // 複製旋轉並增加角度偏移（使用歐拉角）
+                gm.gameInfo.floorDebugMesh.quaternion.copy(gm.gameInfo.floorBody.quaternion);
+
+                // 繞 X 軸旋轉 180 度
+                const qX = new CANNON.Quaternion();
+                qX.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), 0);
+
+                // 繞 Y 軸旋轉 180 度
+                const qY = new CANNON.Quaternion();
+                qY.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI/2 +Math.PI/2+Math.PI/2);
+
+                // 繞 Z 軸旋轉 180 度
+                const qZ = new CANNON.Quaternion();
+                qZ.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), 0);
+
+                // 組合旋轉：先繞 X 軸，再繞 Z 軸
+                gm.gameInfo.floorDebugMesh.quaternion.copy(qZ.mult(qY).mult(qX));
+
+                // 如果需要角度偏移，可以轉換為歐拉角進行調整
+                const euler = new THREE.Euler().setFromQuaternion(gm.gameInfo.floorBody.quaternion);
+                euler.x += 0;  // 角度 X 偏移（弧度）
+                euler.y += 30;  // 角度 Y 偏移（弧度）
+                euler.z += 0;  // 角度 Z 偏移（弧度）
+                //gm.gameInfo.floorDebugMesh.quaternion.setFromEuler(euler);
+            }
+
+            const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
+            const time = gm.sceneInfo.clock.getElapsedTime();
+
+            if (time - gm.gameInfo.getLastSpawnTime() > 100) {
+                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 1);
+                gm.gameInfo.setLastSpawnTime(time);
+            }
+
+            updatePlayer(gm.playerInfo, gm.inputInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, delta);
+            updateEnemies(gm.sceneInfo, gm.enemyInfo, gm.playerInfo, gm.gameInfo, delta, gm.inputInfo);
+            gm.sceneInfo.objectsToRemove.forEach(obj => {
+                gm.sceneInfo.scene.remove(obj.mesh);
+                gm.sceneInfo.world.remove(obj.body);
+                if (obj.enemyIdx !== undefined) gm.enemyInfo.enemies.splice(obj.enemyIdx, 1);
+                if (obj.obstacleIdx !== undefined) {
+                    gm.gameInfo.obstacleMeshes.splice(obj.obstacleIdx, 1);
+                    gm.gameInfo.obstacleBodies.splice(obj.obstacleIdx, 1);
+                }
+                const arrowIdx = gm.sceneInfo.activeArrows.findIndex(a => a.body === obj.body);
+                if (arrowIdx !== -1) gm.sceneInfo.activeArrows.splice(arrowIdx, 1);
+            });
+            gm.sceneInfo.objectsToRemove = [];
+
+            if (gm.cameraMode === 'perspective' && gm.sceneInfo.controls) gm.sceneInfo.controls.update();
+
+            gm.sceneInfo.renderer.render(gm.sceneInfo.scene, gm.sceneInfo.camera);
+
+            // 結束計算 FPS
+            if (gm.stats) gm.stats.end();
+
+            requestAnimationFrame(() => animate(gm));
+        }
+
+        function setupEventListeners(sceneInfo, playerInfo) {
+            const keys = {
+                w: false, a: false, s: false, d: false, space: false, shift: false, '1': false, '2': false, '3': false,
+                mouseLeft: false, mouseMovementX: 0, mouseMovementY: 0, joystick: {x: 0, y: 0}
+            };
+            const mouse = new THREE.Vector2();
+
+            // 攝影機高度偏移（用於 topDown 視角）
+            let cameraOffsetY = 20; // 初始高度偏移（與 updatePlayer 中的默認值一致）
+            const minOffsetY = 5;   // 最小高度（拉近）
+            const maxOffsetY = 100;  // 最大高度（拉遠）
+            const zoomSpeed = 1;  // 滾輪縮放速度
+
+            document.querySelectorAll('#camera-buttons button').forEach(button => {
+                button.addEventListener('click', () => switchCamera(button.dataset.camera, sceneInfo));
+            });
+
+            const keyDownHandler = e => {
+                const key = e.key.toLowerCase();
+                if (key === ' ') keys.space = true;
+                else if (key === 'shift') keys.shift = true;
+                else if (keys.hasOwnProperty(key)) keys[key] = true;
+                if (key === '1') switchCamera('perspective', sceneInfo);
+                else if (key === '2') switchCamera('firstPerson', sceneInfo);
+                else if (key === '3') switchCamera('topDown', sceneInfo);
+            };
+
+            const keyUpHandler = e => {
+                const key = e.key.toLowerCase();
+                if (key === ' ') keys.space = false;
+                else if (key === 'shift') {
+                    keys.shift = false;
+                    const player = playerInfo.getPlayer();
+                    if (player) player.shiftToggle = !player.shiftToggle;
+                } else if (keys.hasOwnProperty(key)) keys[key] = false;
+            };
+
+            const mouseMoveHandler = e => {
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                keys.mouseMovementX = e.movementX || 0;
+                keys.mouseMovementY = e.movementY || 0;
+            };
+
+            const mouseDownHandler = e => {
+                if (e.button === 0) {
+                    keys.mouseLeft = true;
+                    const player = playerInfo.getPlayer();
+                    if (player && gameMaster.cameraMode === 'topDown') player.attackTriggeredByMouse = true;
+                }
+            };
+
+            const mouseUpHandler = e => e.button === 0 && (keys.mouseLeft = false);
+
+            // 添加滑鼠滾輪事件監聽器
+            const wheelHandler = e => {
+                if (gameMaster.cameraMode === 'topDown') {
+                    // 根據滾輪方向調整高度偏移
+                    cameraOffsetY -= e.deltaY * zoomSpeed * 0.01; // deltaY 正值表示向下滾（拉遠），負值表示向上滾（拉近）
+                    cameraOffsetY = Math.max(minOffsetY, Math.min(maxOffsetY, cameraOffsetY)); // 限制範圍
+                }
+            };
+
+            const resizeHandler = () => {
+                sceneInfo.camera.aspect = window.innerWidth / window.innerHeight;
+                sceneInfo.camera.updateProjectionMatrix();
+                sceneInfo.renderer.setSize(window.innerWidth, window.innerHeight);
+            };
+
+            window.addEventListener('keydown', keyDownHandler);
+            window.addEventListener('keyup', keyUpHandler);
+            window.addEventListener('mousemove', mouseMoveHandler);
+            window.addEventListener('mousedown', mouseDownHandler);
+            window.addEventListener('mouseup', mouseUpHandler);
+            window.addEventListener('wheel', wheelHandler);
+            window.addEventListener('resize', resizeHandler);
+
+            const joystickContainer = document.getElementById('joystick-container');
+            const joystick = document.getElementById('joystick');
+            const attackButton = document.getElementById('attack-button');
+            let joystickActive = false, joystickPointerId = null;
+
+            const handleJoystickStart = e => {
+                e.preventDefault();
+                const touch = e.changedTouches[0];
+                joystickActive = true;
+                joystickPointerId = touch.identifier;
+                updateJoystick(touch);
+            };
+
+            const handleJoystickMove = e => {
+                e.preventDefault();
+                if (!joystickActive) return;
+                for (let touch of e.changedTouches) {
+                    if (touch.identifier === joystickPointerId) {
+                        updateJoystick(touch);
+                        break;
+                    }
+                }
+            };
+
+            const handleJoystickEnd = e => {
+                e.preventDefault();
+                for (let touch of e.changedTouches) {
+                    if (touch.identifier === joystickPointerId) {
+                        joystickActive = false;
+                        joystickPointerId = null;
+                        resetJoystick();
+                        break;
+                    }
+                }
+            };
+
+            const updateJoystick = touch => {
+                const rect = joystickContainer.getBoundingClientRect();
+                const x = touch.clientX - rect.left, y = touch.clientY - rect.top;
+                const centerX = rect.width / 2, centerY = rect.height / 2;
+                const deltaX = x - centerX, deltaY = y - centerY;
+                const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+                const maxDistance = rect.width / 2;
+                keys.joystick.x = Math.max(-1, Math.min(1, deltaX / maxDistance));
+                keys.joystick.y = Math.max(-1, Math.min(1, deltaY / maxDistance));
+                joystick.style.left = `${centerX + keys.joystick.x * maxDistance}px`;
+                joystick.style.top = `${centerY + keys.joystick.y * maxDistance}px`;
+            };
+
+            const resetJoystick = () => {
+                joystick.style.left = '50%';
+                joystick.style.top = '50%';
+                keys.joystick.x = keys.joystick.y = 0;
+            };
+
+            attackButton.addEventListener('touchstart', e => (e.preventDefault(), keys.space = true));
+            attackButton.addEventListener('touchend', e => (e.preventDefault(), keys.space = false));
+            joystickContainer.addEventListener('touchstart', handleJoystickStart);
+            joystickContainer.addEventListener('touchmove', handleJoystickMove);
+            joystickContainer.addEventListener('touchend', handleJoystickEnd);
+            joystickContainer.addEventListener('touchcancel', handleJoystickEnd);
+
+            return {
+                keys, mouse,
+                cameraOffsetY: () => cameraOffsetY, // 提供方法以獲取當前高度偏移
+                removeListeners: () => {
+                    window.removeEventListener('keydown', keyDownHandler);
+                    window.removeEventListener('keyup', keyUpHandler);
+                    window.removeEventListener('mousemove', mouseMoveHandler);
+                    window.removeEventListener('mousedown', mouseDownHandler);
+                    window.removeEventListener('mouseup', mouseUpHandler);
+                    window.removeEventListener('wheel', wheelHandler);
+                    window.removeEventListener('resize', resizeHandler);
+                    joystickContainer.removeEventListener('touchstart', handleJoystickStart);
+                    joystickContainer.removeEventListener('touchmove', handleJoystickMove);
+                    joystickContainer.removeEventListener('touchend', handleJoystickEnd);
+                    joystickContainer.removeEventListener('touchcancel', handleJoystickEnd);
+                }
+            };
+        }
+
+        function switchCamera(cameraMode, sceneInfo) {
+            gameMaster.cameraMode = cameraMode;
+            if (cameraMode === 'perspective') {
+                if (!sceneInfo.controls) {
+                    sceneInfo.controls = new OrbitControls(sceneInfo.camera, sceneInfo.renderer.domElement);
+                    sceneInfo.controls.target.set(30, 0, 30);
+                    sceneInfo.camera.position.set(30, 10, 40);
+                    sceneInfo.camera.lookAt(30, 0, 30);
+                }
+            } else {
+                if (sceneInfo.controls) {
+                    sceneInfo.controls.dispose();
+                    sceneInfo.controls = null;
+                }
+                if (cameraMode === 'firstPerson') {
+                    sceneInfo.camera.rotation.set(0, 0, 0);
+                }
+            }
+        }
+
+        function initNewLevel(gm) {
+            const fullscreenButton = document.getElementById('fullscreenButton');
+            if (fullscreenButton) {
+                fullscreenButton.addEventListener('click', toggleFullscreen);
+            }
+
+            const oldPlayer = gm.playerInfo?.getPlayer();
+            const savedState = {
+                health: oldPlayer?.health || 100,
+                hasKey: oldPlayer?.hasKey || false,
+                shiftToggle: oldPlayer?.shiftToggle || false,
+                hasBow: oldPlayer?.hasBow || false,
+                arrowCount: oldPlayer?.arrowCount || 0
+            };
+
+            if (gm.inputInfo?.removeListeners) gm.inputInfo.removeListeners();
+            if (gm.sceneInfo?.renderer?.domElement) document.body.removeChild(gm.sceneInfo.renderer.domElement);
+
+            gm.sceneInfo = setupScene();
+            gm.gameInfo = {
+                chunkSize: 8,
+                cellSize: 4,
+                gridSize: 6, // 20 / 4 + 1 = 6x6（5 格子 + 1）
+                chunks: new Map(),
+                obstacles: [],
+                treasures: [],
+                obstacleMeshes: [],
+                obstacleBodies: [],
+                treasureMeshes: new Map(),
+                key: null,
+                door: null,
+                lastSpawnTime: -9999,
+                getLastSpawnTime: function() { return this.lastSpawnTime; },
+                setLastSpawnTime: function(time) { this.lastSpawnTime = time; }
+            };
+
+            gm.stats = new Stats();
+            gm.stats.showPanel(0);
+            document.body.appendChild(gm.stats.dom);
+            gm.stats.dom.style.position = 'absolute';
+            gm.stats.dom.style.top = '0px';
+            gm.stats.dom.style.left = '0px';
+
+            createFloor(gm.sceneInfo, gm.gameInfo); // 初始化 floorMaterial
+            generateChunk(gm.sceneInfo, gm.gameInfo, 0, 0); // 生成初始區塊
+
+            gm.enemyInfo = { enemies: [] };
+            gm.playerInfo = { getPlayer: createPlayer(gm.sceneInfo) };
+            gm.inputInfo = setupEventListeners(gm.sceneInfo, gm.playerInfo);
+            gm.newGame = false;
+
+            const newPlayer = gm.playerInfo.getPlayer();
+            if (newPlayer) {
+                newPlayer.health = savedState.health;
+                newPlayer.hasKey = savedState.hasKey;
+                newPlayer.shiftToggle = savedState.shiftToggle;
+                newPlayer.hasBow = savedState.hasBow;
+                newPlayer.arrowCount = savedState.arrowCount;
+            }
+
+            animate(gm);
+        }
+        function toggleFullscreen() {
+            const elem = document.documentElement; // 使用整個頁面作為全螢幕目標
+            if (!document.fullscreenElement) {
+                // 進入全螢幕
+                elem.requestFullscreen().then(() => {
+                    resizeRenderer(gameMaster.sceneInfo);
+                }).catch(err => {
+                    console.error('無法進入全螢幕:', err);
+                });
+            } else {
+                // 退出全螢幕
+                document.exitFullscreen().then(() => {
+                    resizeRenderer(gameMaster.sceneInfo);
+                }).catch(err => {
+                    console.error('無法退出全螢幕:', err);
+                });
+            }
+        }
+
+        function resizeRenderer(sceneInfo) {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            sceneInfo.renderer.setSize(width, height);
+            sceneInfo.camera.aspect = width / height;
+            sceneInfo.camera.updateProjectionMatrix();
+        }
+        let gameMaster = {gameInfo: null, sceneInfo: null, playerInfo: null, enemyInfo: null, inputInfo: null, newGame: true, cameraMode: 'topDown'};
+        initNewLevel(gameMaster);
+/*
+(4) [3, 4.87511773969438, 2.9122158442404924, 3.601915666114905]
+(4) [2.3108405895726376, 5.718814543749085, 2.69903066088089, 2.644042598337683]
+(4) [4.920113662830902, 2.8599522675197324, 0.869029560285413, 2.221096388785276]
+(4) [3.6737878158785167, 4.715948808504093, 4.652905149469271, 2.4247263695147003]
+
+(4) [3, 2.3108405895726376, 4.920113662830902, 3.6737878158785167]
+(4) [4.87511773969438, 5.718814543749085, 2.8599522675197324, 4.715948808504093]
+(4) [2.9122158442404924, 2.69903066088089, 0.869029560285413, 4.652905149469271]
+(4) [3.601915666114905, 2.644042598337683, 2.221096388785276, 2.4247263695147003]
+*/
+
     </script>
 </body>
 </html>
