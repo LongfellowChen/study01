@@ -351,7 +351,7 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.02);
             scene.add(hemiLight);
 
             const spotLight = new THREE.SpotLight(0xffffff, 800);
@@ -377,7 +377,7 @@
             gameInfo.gridSize = gameInfo.chunkSize / gameInfo.cellSize + 1; // 每個區塊的格子數（5x5）
             gameInfo.chunks = new Map(); // 儲存活躍區塊（key: "x,z", value: { mesh, body }）
 
-            const floorTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
+            const floorTexture = textureLoader.load(ext_resource_url + '/textures/rock.png');
             floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
             floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
             gameInfo.floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
