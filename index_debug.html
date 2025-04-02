@@ -629,7 +629,7 @@
             const rockTexture = textureLoader.load(ext_resource_url + '/textures/rock.png');
             const grassTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
             const waterTexture = textureLoader.load(ext_resource_url + '/textures/water.jpeg');
-            const mossTexture = textureLoader.load(ext_resource_url + '/textures/moss_rock.jpeg');
+            const mossTexture = textureLoader.load(ext_resource_url + '/textures/moss_rock.png');
             const lavaTexture = textureLoader.load(ext_resource_url + '/textures/lava.jpeg');
 
             // 設置材質屬性
@@ -697,7 +697,7 @@
             }
             */
            
-            let material = gameInfo.materials.moss;
+            let material = gameInfo.materials.water;
             // 創建單一 Mesh
             const chunkMesh = new THREE.Mesh(geometry, material);
             chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
