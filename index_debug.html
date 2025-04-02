@@ -668,16 +668,6 @@
             geometry.computeVertexNormals();
 
             /*
-            const chunkMesh = new THREE.Mesh(geometry, gameInfo.materials.grass);
-            chunkMesh.position.set(
-                chunkX * gameInfo.chunkSize, // 左下角對齊
-                0,
-                chunkZ * gameInfo.chunkSize
-            );
-            chunkMesh.receiveShadow = true;
-            sceneInfo.scene.add(chunkMesh);
-            */
-
             // 計算區塊平均高度
             let totalHeight = 0;
             let waterData_count = 0;
@@ -701,7 +691,9 @@
             } else {
                 material = gameInfo.materials.rock;
             }
-
+            */
+           
+            let material = gameInfo.materials.rock
             // 創建單一 Mesh
             const chunkMesh = new THREE.Mesh(geometry, material);
             chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
