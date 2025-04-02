@@ -629,9 +629,11 @@
             const rockTexture = textureLoader.load(ext_resource_url + '/textures/rock.png');
             const grassTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
             const waterTexture = textureLoader.load(ext_resource_url + '/textures/water.jpeg');
+            const mossTexture = textureLoader.load(ext_resource_url + '/textures/moss_rock.jpeg');
+            const lavaTexture = textureLoader.load(ext_resource_url + '/textures/lava.jpeg');
 
             // 設置材質屬性
-            [rockTexture, grassTexture, waterTexture].forEach(texture => {
+            [rockTexture, grassTexture, waterTexture,mossTexture,lavaTexture].forEach(texture => {
                 texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
                 texture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
             });
@@ -640,7 +642,9 @@
             gameInfo.materials = {
                 rock: new THREE.MeshStandardMaterial({ map: rockTexture }),
                 grass: new THREE.MeshStandardMaterial({ map: grassTexture }),
-                water: new THREE.MeshStandardMaterial({ map: waterTexture, transparent: true, opacity: 0.8 }) // 水面半透明
+                water: new THREE.MeshStandardMaterial({ map: waterTexture, transparent: true, opacity: 0.8 }), // 水面半透明
+                moss: new THREE.MeshStandardMaterial({ map: mossTexture }),
+                lava: new THREE.MeshStandardMaterial({ map: lavaTexture }),
             };
         }
 
@@ -693,7 +697,7 @@
             }
             */
            
-            let material = gameInfo.materials.rock
+            let material = gameInfo.materials.moss;
             // 創建單一 Mesh
             const chunkMesh = new THREE.Mesh(geometry, material);
             chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
