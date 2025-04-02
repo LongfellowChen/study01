@@ -599,7 +599,7 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.05);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.02);
             scene.add(hemiLight);
 
             const spotLight = new THREE.SpotLight(0xffffff, 800);
@@ -631,9 +631,19 @@
             const waterTexture = textureLoader.load(ext_resource_url + '/textures/water.jpeg');
             const mossTexture = textureLoader.load(ext_resource_url + '/textures/moss_rock.png');
             const lavaTexture = textureLoader.load(ext_resource_url + '/textures/lava.jpeg');
+            const desertTexture = textureLoader.load(ext_resource_url + '/textures/desert.jpeg');
+            const tileTexture = textureLoader.load(ext_resource_url + '/textures/tile.jpeg');
+            
 
             // 設置材質屬性
-            [rockTexture, grassTexture, waterTexture,mossTexture,lavaTexture].forEach(texture => {
+            [   rockTexture, 
+                grassTexture, 
+                waterTexture,
+                mossTexture,
+                lavaTexture,
+                desertTexture,
+                tileTexture,
+            ].forEach(texture => {
                 texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
                 texture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
             });
@@ -645,6 +655,8 @@
                 water: new THREE.MeshStandardMaterial({ map: waterTexture, transparent: true, opacity: 0.8 }), // 水面半透明
                 moss: new THREE.MeshStandardMaterial({ map: mossTexture }),
                 lava: new THREE.MeshStandardMaterial({ map: lavaTexture }),
+                desert: new THREE.MeshStandardMaterial({ map: desertTexture }),
+                tile: new THREE.MeshStandardMaterial({ map: tileTexture }),
             };
         }
 
@@ -697,7 +709,7 @@
             }
             */
            
-            let material = gameInfo.materials.water;
+            let material = gameInfo.materials.rock;
             // 創建單一 Mesh
             const chunkMesh = new THREE.Mesh(geometry, material);
             chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
@@ -766,6 +778,15 @@
                 console.log(`No chunk found at ${chunkKey} for position (${x}, ${z})`);
                 return 0;
             }
+
+            let totalHeight = 0;
+            for (let x = 0; x < gameInfo.gridSize; x++) {
+                for (let z = 0; z < gameInfo.gridSize; z++) {
+                    totalHeight += chunk.heightData[x][z];
+                }
+            }
+            const avgHeight = totalHeight / (gameInfo.gridSize * gameInfo.gridSize);
+            return avgHeight;
 
             // **旋轉 heightData 以匹配物理地面方向**
             const rotatedHeightData = [];
@@ -869,7 +890,7 @@
                 const mesh = new THREE.Mesh(obstacleGeometry, material);
                 const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize / 2;
                 const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize / 2;
-                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width / 4;
+                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width / 3;
 
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
@@ -939,7 +960,7 @@
                 const mesh = new THREE.Mesh(geometry, material);
                 const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
                 const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
-                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width/2;
+                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width/3;
 
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
@@ -1252,6 +1273,7 @@
                             if (enemy.body === target) {
                                 enemy.health -= player.baseAttackPower + player.attackPowerBoost;
                                 arrowBody.hasHit = true;
+                                enemy.targetPosition = player.soldier.position.clone();
                                 sceneInfo.objectsToRemove.push({ mesh: arrow, body: arrowBody });
                                 if (enemy.health <= 0) {
                                     sceneInfo.objectsToRemove.push({ mesh: enemy, body: enemy.body, enemyIdx: idx });
@@ -1328,6 +1350,7 @@
                             const angleDeg = Math.acos(playerForward.dot(enemyDirection)) * 180 / Math.PI;
                             if (angleDeg <= 60) {
                                 enemy.health -= player.baseAttackPower + player.attackPowerBoost;
+                                enemy.targetPosition = player.soldier.position.clone();
                                 if (enemy.health <= 0) {
                                     sceneInfo.objectsToRemove.push({ mesh: enemy, body: enemy.body, enemyIdx: idx });
                                 }
@@ -1520,6 +1543,7 @@
         }
 
         function updateEnemies(sceneInfo, enemyInfo, playerInfo, gameInfo, delta, inputInfo) {
+            const alertRange = 15;
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier) return;
 
@@ -1624,6 +1648,7 @@
                     } else if (canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
                         enemy.targetPosition = player.soldier.position.clone();
                         enemy.isChasing = true;
+                        alertNearbyEnemies(gameInfo.obstacleBodies, enemy, enemyInfo.enemies, player.soldier, alertRange);
                         const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
                         enemy.rotation.y += getShortestAngleDifference(enemy.rotation.y, Math.atan2(direction.x, direction.z)) * rotationSpeed * delta;
                         enemy.body.velocity.set(direction.x * chaseSpeed, enemy.body.velocity.y, direction.z * chaseSpeed);
@@ -1687,16 +1712,16 @@
             return !result.hasHit || result.distance > distance;
         }
 
-        function alertNearbyEnemies(wallBoxes, alertingEnemy, enemies, playerSoldier, alertRange) {
+        function alertNearbyEnemies(obstacleBodies, alertingEnemy, enemies, playerSoldier, alertRange) {
 
             enemies.forEach(enemy => {
                 if (enemy === alertingEnemy || enemy.isChasing) return;
                 const distance = alertingEnemy.position.distanceTo(enemy.position);
                 if (distance <= alertRange) {
-                    if (canSeePlayer(enemy, playerSoldier, wallBoxes, Math.PI * 2 / 3)) {
+                    if (1) {//canSeePlayer(enemy, playerSoldier, obstacleBodies, Math.PI * 2 / 3)) {
                         enemy.targetPosition = playerSoldier.position.clone();
                         enemy.isChasing = true;
-                        console.log('Enemy alerted!');
+                        //console.log('Enemy alerted!');
                     } else {
                         enemy.targetPosition = alertingEnemy.position.clone();
                     }
