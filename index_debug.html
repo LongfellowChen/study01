@@ -105,7 +105,7 @@
         const enableRenderDistance = true;
         const globalRenderDistance = 35;
         const arrow_sub1 = 0;
-        const worldSize = 2000;
+        const worldSize = 500;
 
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -378,7 +378,7 @@
 
             for (let y = 1; y < worldGridSize - 1; y++) {
                 for (let x = 1; x < worldGridSize - 1; x++) {
-                    //if (maze[x][y] === 1 && Math.random() < 0.8)
+                    if (maze[x][y] === 1 && Math.random() < 0.8)
                         maze[x][y] = 0;
                 }
             }
@@ -599,7 +599,7 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.02);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.2);
             scene.add(hemiLight);
 
             const spotLight = new THREE.SpotLight(0xffffff, 800);
@@ -683,7 +683,7 @@
             }
             geometry.computeVertexNormals();
 
-            /*
+            
             // 計算區塊平均高度
             let totalHeight = 0;
             let waterData_count = 0;
@@ -707,9 +707,9 @@
             } else {
                 material = gameInfo.materials.rock;
             }
-            */
+            
            
-            let material = gameInfo.materials.rock;
+            ///let material = gameInfo.materials.rock;
             // 創建單一 Mesh
             const chunkMesh = new THREE.Mesh(geometry, material);
             chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
@@ -849,8 +849,8 @@
                         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
                         const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize / 2;
                         const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize / 2;
-                        ///const posY = getTerrainHeightAt(posX, posZ, gameInfo) + gameInfo.cellSize / 3;
-                        const posY = gameInfo.cellSize / 3;
+                        const posY = getTerrainHeightAt(posX, posZ, gameInfo);// + gameInfo.cellSize / 3;
+                        ///const posY = gameInfo.cellSize / 3;
                         wall.position.set(posX, posY, posZ);
                         wall.castShadow = wall.receiveShadow = true;
                         sceneInfo.scene.add(wall);
@@ -1453,7 +1453,7 @@
                 sceneInfo.camera.rotation.y = player.soldier.rotation.y + Math.PI;
             } else if (gameMaster.cameraMode === 'topDown') {
                 const offsetY = inputInfo.cameraOffsetY(); // 動態獲取高度偏移
-                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z);
+                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z+10);
                 sceneInfo.camera.lookAt(player.soldier.position);
             } else if (sceneInfo.controls) {
                 sceneInfo.controls.target.copy(player.soldier.position);
@@ -1784,8 +1784,8 @@
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
 
-            if (time - gm.gameInfo.getLastSpawnTime() > 1) {
-                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 100);
+            if (time - gm.gameInfo.getLastSpawnTime() > 10) {
+                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 50);
                 gm.gameInfo.setLastSpawnTime(time);
             }
 
@@ -1978,8 +1978,11 @@
                 if (!sceneInfo.controls) {
                     sceneInfo.controls = new OrbitControls(sceneInfo.camera, sceneInfo.renderer.domElement);
                     sceneInfo.controls.target.set(30, 0, 30);
-                    sceneInfo.camera.position.set(30, 10, 40);
+                    ///sceneInfo.camera.position.set(30, 10, 40);
+                    const player = gameMaster.playerInfo.getPlayer();
+                    sceneInfo.camera.position.set(player.soldier.position.x+10, 40, player.soldier.position.z+10)
                     sceneInfo.camera.lookAt(30, 0, 30);
+                    console.log( 'set perspective' );
                 }
             } else {
                 if (sceneInfo.controls) {

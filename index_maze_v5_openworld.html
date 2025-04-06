@@ -105,6 +105,7 @@
         const enableRenderDistance = true;
         const globalRenderDistance = 35;
         const arrow_sub1 = 0;
+        const worldSize = 5000;
 
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -185,7 +186,7 @@
             return delta;
         }
 
-        function generateWorldData(worldSize, chunkSize, cellSize) {
+        function simple_generateWorldData(worldSize, chunkSize, cellSize) {
             const gridSize = chunkSize / cellSize + 1;
             const worldGridSize = Math.floor(worldSize / cellSize);
             const simplex = new SimplexNoise();
@@ -205,6 +206,8 @@
             const maze = Array(worldGridSize).fill().map(() => Array(worldGridSize).fill(1));
             const obstacles = [];
             const treasures = [];
+            let key = null;
+            let door = null;
 
             function getUnvisitedNeighbors(x, y) {
                 const neighbors = [];
@@ -245,22 +248,266 @@
             for (let y = 1; y < worldGridSize - 1; y++) {
                 for (let x = 1; x < worldGridSize - 1; x++) {
                     //if (maze[x][y] === 1 && Math.random() < 0.8)
-                    //    maze[x][y] = 0;
+                        maze[x][y] = 0;
+                }
+            }
+
+            // 生成障礙物、寶物、key 和 door
+            const openCells = [];
+            for (let y = 1; y < worldGridSize - 1; y++) {
+                for (let x = 1; x < worldGridSize - 1; x++) {
+                    if (maze[x][y] === 0 && !(x === 1 && y === 1)) {
+                        openCells.push({x, z: y});
+                    }
+                }
+            }
+
+            // 隨機選擇位置放置障礙物和寶物
+            for (let i = 0; i < openCells.length; i++) {
+                const cell = openCells[i];
+                if (Math.random() < 0.1 && obstacles.length < worldGridSize * worldGridSize * 0.05) {
+                    obstacles.push({x: cell.x, z: cell.z, durability: Math.floor(Math.random() * 3) + 1});
+                } else if (Math.random() < 0.1 && treasures.length < worldGridSize * worldGridSize * 0.05) {
+                    treasures.push({x: cell.x, z: cell.z, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+                }
+            }
+
+            // 隨機選擇一個障礙物放置 key 和 door（確保至少有一個障礙物）
+            if (obstacles.length > 0) {
+                const keyObstacleIndex = Math.floor(Math.random() * obstacles.length);
+                const keyObstacle = obstacles[keyObstacleIndex];
+                key = {x: keyObstacle.x, z: keyObstacle.z, hidden: true}; // 初始隱藏
+                keyObstacle.hidesKey = true; // 標記此障礙物隱藏 key
+
+                let doorObstacleIndex;
+                do {
+                    doorObstacleIndex = Math.floor(Math.random() * obstacles.length);
+                } while (doorObstacleIndex === keyObstacleIndex && obstacles.length > 1); // 確保 door 和 key 不重疊（如果有多於一個障礙物）
+                const doorObstacle = obstacles[doorObstacleIndex];
+                door = {x: doorObstacle.x, z: doorObstacle.z, hidden: true}; // 初始隱藏
+                doorObstacle.hidesDoor = true; // 標記此障礙物隱藏 door
+            }
+
+            return { heightData, maze, obstacles, treasures, key, door };
+        }
+        
+        function generateWorldData(worldSize, chunkSize, cellSize) {
+
+            const gridSize = chunkSize / cellSize + 1;
+            const worldGridSize = Math.floor(worldSize / cellSize);
+            const simplex = new SimplexNoise();
+
+            const heightData = Array(worldGridSize).fill().map(() => Array(worldGridSize).fill(0));
+
+            // 1. 生成基礎地形（多層噪聲）
+            for (let x = 0; x < worldGridSize; x++) {
+                for (let z = 0; z < worldGridSize; z++) {
+                    const worldX = x * cellSize;
+                    const worldZ = z * cellSize;
+
+                    // 多層噪聲疊加
+                    const noise1 = simplex.noise2D(worldX / 100, worldZ / 100); // 大尺度（山脈）
+                    const noise2 = simplex.noise2D(worldX / 50, worldZ / 50) * 0.5; // 中尺度（丘陵）
+                    const noise3 = simplex.noise2D(worldX / 20, worldZ / 20) * 0.2; // 小尺度（細節）
+                    let height = (noise1 + noise2 + noise3 + 2) * 10; // 範圍調整到 0-40
+
+                    // 2. 定義地形區域
+                    if (height < 5) {
+                        height = 0; // 大海（低於海平面）
+                    } else if (height < 10) {
+                        height = 5 + (height - 5) * 0.5; // 草原（平坦區域）
+                    } else if (height > 20) {
+                        height = height * 1.5; // 高山（放大高度）
+                    }
+
+                    heightData[x][z] = Math.max(0, height); // 確保高度不為負值
+                    if (isNaN(heightData[x][z])) heightData[x][z] = 0;
+
+                }
+            }
+
+            // 3. 生成河流和湖泊
+            const waterData = Array(worldGridSize).fill().map(() => Array(worldGridSize).fill(false));
+            generateRiversAndLakes(heightData, waterData, worldGridSize);
+
+            // 4. 平滑地形（可選）
+            smoothHeightData(heightData, worldGridSize);
+
+            // 以下是原有的迷宮、障礙物、寶物生成邏輯，保持不變
+            const maze = Array(worldGridSize).fill().map(() => Array(worldGridSize).fill(1));
+            const obstacles = [];
+            const treasures = [];
+            let key = null;
+            let door = null;
+
+            function getUnvisitedNeighbors(x, y) {
+                const neighbors = [];
+                const directions = [{dx: 0, dy: -2}, {dx: 0, dy: 2}, {dx: -2, dy: 0}, {dx: 2, dy: 0}];
+                for (const dir of directions) {
+                    const nx = x + dir.dx, ny = y + dir.dy;
+                    if (nx > 0 && nx < worldGridSize - 1 && ny > 0 && ny < worldGridSize - 1 && maze[nx][ny] === 1) {
+                        neighbors.push({x: nx, y: ny});
+                    }
+                }
+                return neighbors;
+            }
+
+            function removeWall(x1, y1, x2, y2) {
+                const wx = (x1 + x2) / 2, wy = (y1 + y2) / 2;
+                maze[wy][wx] = 0;
+            }
+
+            const stack = [{x: 1, y: 1}];
+            maze[1][1] = 0;
+            maze[1][2] = 0;
+            maze[2][1] = 0;
+            maze[2][2] = 0;
+
+            while (stack.length) {
+                const current = stack[stack.length - 1];
+                const neighbors = getUnvisitedNeighbors(current.x, current.y);
+                if (neighbors.length) {
+                    const next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    removeWall(current.x, current.y, next.x, next.y);
+                    maze[next.x][next.y] = 0;
+                    stack.push(next);
+                } else {
+                    stack.pop();
                 }
             }
 
             for (let y = 1; y < worldGridSize - 1; y++) {
                 for (let x = 1; x < worldGridSize - 1; x++) {
+                    if (maze[x][y] === 1 && Math.random() < 0.8)
+                        maze[x][y] = 0;
+                }
+            }
+
+            // 生成障礙物、寶物、key 和 door
+            const openCells = [];
+            for (let y = 1; y < worldGridSize - 1; y++) {
+                for (let x = 1; x < worldGridSize - 1; x++) {
                     if (maze[x][y] === 0 && !(x === 1 && y === 1)) {
-                        if (Math.random() < 0.1 && obstacles.length < worldGridSize * worldGridSize * 0.05) 
-                            obstacles.push({x, z: y, durability: Math.floor(Math.random() * 3) + 1});
-                        else if (Math.random() < 0.1 && treasures.length < worldGridSize * worldGridSize * 0.05) 
-                            treasures.push({x, z: y, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+                        openCells.push({x, z: y});
                     }
                 }
             }
 
-            return { heightData, maze, obstacles, treasures };
+            // 隨機選擇位置放置障礙物和寶物
+            for (let i = 0; i < openCells.length; i++) {
+                const cell = openCells[i];
+                if (Math.random() < 0.1 && obstacles.length < worldGridSize * worldGridSize * 0.05) {
+                    obstacles.push({x: cell.x, z: cell.z, durability: Math.floor(Math.random() * 3) + 1});
+                } else if (Math.random() < 0.1 && treasures.length < worldGridSize * worldGridSize * 0.05) {
+                    treasures.push({x: cell.x, z: cell.z, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+                }
+            }
+
+            // 隨機選擇一個障礙物放置 key 和 door（確保至少有一個障礙物）
+            if (obstacles.length > 0) {
+                const keyObstacleIndex = Math.floor(Math.random() * obstacles.length);
+                const keyObstacle = obstacles[keyObstacleIndex];
+                key = {x: keyObstacle.x, z: keyObstacle.z, hidden: true}; // 初始隱藏
+                keyObstacle.hidesKey = true; // 標記此障礙物隱藏 key
+
+                let doorObstacleIndex;
+                do {
+                    doorObstacleIndex = Math.floor(Math.random() * obstacles.length);
+                } while (doorObstacleIndex === keyObstacleIndex && obstacles.length > 1); // 確保 door 和 key 不重疊（如果有多於一個障礙物）
+                const doorObstacle = obstacles[doorObstacleIndex];
+                door = {x: doorObstacle.x, z: doorObstacle.z, hidden: true}; // 初始隱藏
+                doorObstacle.hidesDoor = true; // 標記此障礙物隱藏 door
+            }
+
+            return { heightData, maze, obstacles, treasures, key, door, waterData }; // 返回 waterData 以供後續使用
+        }
+
+        // 河流與湖泊生成輔助函數
+        function generateRiversAndLakes(heightData, waterData, worldGridSize) {
+            // 從高處開始模擬河流
+            for (let i = 0; i < 5; i++) { // 生成 5 條河流
+                let x = Math.floor(Math.random() * worldGridSize);
+                let z = Math.floor(Math.random() * worldGridSize);
+
+                // 找到高處起點
+                while (heightData[x][z] < 20) {
+                    x = Math.floor(Math.random() * worldGridSize);
+                    z = Math.floor(Math.random() * worldGridSize);
+                }
+
+                // 模擬水流向下
+                while (heightData[x][z] > 0) {
+                    waterData[x][z] = true; // 標記為河流
+                    heightData[x][z] = Math.max(0, heightData[x][z] - 2); // 河流侵蝕地形
+
+                    // 找到最低的鄰居
+                    let minHeight = heightData[x][z];
+                    let nextX = x;
+                    let nextZ = z;
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dz = -1; dz <= 1; dz++) {
+                            const nx = x + dx;
+                            const nz = z + dz;
+                            if (nx >= 0 && nx < worldGridSize && nz >= 0 && nz < worldGridSize) {
+                                if (heightData[nx][nz] < minHeight) {
+                                    minHeight = heightData[nx][nz];
+                                    nextX = nx;
+                                    nextZ = nz;
+                                }
+                            }
+                        }
+                    }
+
+                    // 如果到達海平面或低窪處，生成湖泊
+                    if (minHeight <= 5) {
+                        createLake(heightData, waterData, nextX, nextZ, worldGridSize);
+                        break;
+                    }
+
+                    x = nextX;
+                    z = nextZ;
+                }
+            }
+        }
+
+        // 生成湖泊
+        function createLake(heightData, waterData, x, z, worldGridSize) {
+            const lakeSize = Math.floor(Math.random() * 3) + 2; // 湖泊大小 2-4
+            for (let dx = -lakeSize; dx <= lakeSize; dx++) {
+                for (let dz = -lakeSize; dz <= lakeSize; dz++) {
+                    const nx = x + dx;
+                    const nz = z + dz;
+                    if (nx >= 0 && nx < worldGridSize && nz >= 0 && nz < worldGridSize) {
+                        if (Math.sqrt(dx * dx + dz * dz) <= lakeSize) {
+                            waterData[nx][nz] = true; // 標記為湖泊
+                            heightData[nx][nz] = 5; // 平坦湖面
+                        }
+                    }
+                }
+            }
+        }
+
+        // 平滑地形
+        function smoothHeightData(heightData, worldGridSize) {
+            const tempData = heightData.map(row => [...row]);
+            for (let x = 1; x < worldGridSize - 1; x++) {
+                for (let z = 1; z < worldGridSize - 1; z++) {
+                    let sum = 0;
+                    let count = 0;
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dz = -1; dz <= 1; dz++) {
+                            sum += heightData[x + dx][z + dz];
+                            count++;
+                        }
+                    }
+                    tempData[x][z] = sum / count;
+                }
+            }
+            for (let x = 0; x < worldGridSize; x++) {
+                for (let z = 0; z < worldGridSize; z++) {
+                    heightData[x][z] = tempData[x][z];
+                }
+            }
         }
 
         function extractChunkData(worldData, chunkX, chunkZ, chunkSize, cellSize) {
@@ -270,9 +517,12 @@
             const worldGridSize = worldData.heightData.length;
 
             const heightData = Array(gridSize).fill().map(() => Array(gridSize).fill(0));
+            const waterData = Array(gridSize).fill().map(() => Array(gridSize).fill(0));
             const maze = Array(gridSize).fill().map(() => Array(gridSize).fill(0));
             const obstacles = [];
             const treasures = [];
+            let key = null;
+            let door = null;
 
             for (let x = 0; x < gridSize; x++) {
                 for (let z = 0; z < gridSize; z++) {
@@ -281,9 +531,11 @@
                     if (worldX >= 0 && worldX < worldGridSize && worldZ >= 0 && worldZ < worldGridSize) {
                         heightData[z][x] = worldData.heightData[worldX][worldZ];
                         maze[x][z] = worldData.maze[worldX][worldZ];
+                        waterData[z][x] = worldData.waterData[worldX][worldZ];
                     } else {
                         heightData[x][z] = 0;
                         maze[x][z] = 1;
+                        waterData[z][x] = false;
                     }
                 }
             }
@@ -292,7 +544,13 @@
                 const localX = obstacle.x - startX;
                 const localZ = obstacle.z - startZ;
                 if (localX >= 0 && localX < gridSize && localZ >= 0 && localZ < gridSize) {
-                    obstacles.push({ x: localX, z: localZ, durability: obstacle.durability });
+                    obstacles.push({
+                        x: localX,
+                        z: localZ,
+                        durability: obstacle.durability,
+                        hidesKey: obstacle.hidesKey || false,
+                        hidesDoor: obstacle.hidesDoor || false
+                    });
                 }
             });
 
@@ -304,7 +562,24 @@
                 }
             });
 
-            return { heightData, maze, obstacles, treasures };
+            // 提取 key 和 door
+            if (worldData.key) {
+                const localKeyX = worldData.key.x - startX;
+                const localKeyZ = worldData.key.z - startZ;
+                if (localKeyX >= 0 && localKeyX < gridSize && localKeyZ >= 0 && localKeyZ < gridSize) {
+                    key = { x: localKeyX, z: localKeyZ, hidden: worldData.key.hidden };
+                }
+            }
+
+            if (worldData.door) {
+                const localDoorX = worldData.door.x - startX;
+                const localDoorZ = worldData.door.z - startZ;
+                if (localDoorX >= 0 && localDoorX < gridSize && localDoorZ >= 0 && localDoorZ < gridSize) {
+                    door = { x: localDoorX, z: localDoorZ, hidden: worldData.door.hidden };
+                }
+            }
+
+            return { heightData, maze, obstacles, treasures, key, door, waterData };
         }
         
         function setupScene() {
@@ -324,7 +599,7 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.05);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.2);
             scene.add(hemiLight);
 
             const spotLight = new THREE.SpotLight(0xffffff, 800);
@@ -350,12 +625,39 @@
             gameInfo.gridSize = gameInfo.chunkSize / gameInfo.cellSize + 1; // 每個區塊的格子數（5x5）
             gameInfo.chunks = new Map(); // 儲存活躍區塊（key: "x,z", value: { mesh, body }）
 
-            //const floorTexture = textureLoader.load(ext_resource_url + '/textures/tile.jpeg');
-            const floorTexture = textureLoader.load(ext_resource_url + '/textures/rock.png');
-            //const floorTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
-            floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
-            floorTexture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
-            gameInfo.floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture });
+            // 加載多種材質
+            const rockTexture = textureLoader.load(ext_resource_url + '/textures/rock.png');
+            const grassTexture = textureLoader.load(ext_resource_url + '/textures/grass.png');
+            const waterTexture = textureLoader.load(ext_resource_url + '/textures/water.jpeg');
+            const mossTexture = textureLoader.load(ext_resource_url + '/textures/moss_rock.png');
+            const lavaTexture = textureLoader.load(ext_resource_url + '/textures/lava.jpeg');
+            const desertTexture = textureLoader.load(ext_resource_url + '/textures/desert.jpeg');
+            const tileTexture = textureLoader.load(ext_resource_url + '/textures/tile.jpeg');
+            
+
+            // 設置材質屬性
+            [   rockTexture, 
+                grassTexture, 
+                waterTexture,
+                mossTexture,
+                lavaTexture,
+                desertTexture,
+                tileTexture,
+            ].forEach(texture => {
+                texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                texture.repeat.set(gameInfo.gridSize / 2, gameInfo.gridSize / 2);
+            });
+
+            // 創建材質對象並儲存
+            gameInfo.materials = {
+                rock: new THREE.MeshStandardMaterial({ map: rockTexture }),
+                grass: new THREE.MeshStandardMaterial({ map: grassTexture }),
+                water: new THREE.MeshStandardMaterial({ map: waterTexture, transparent: true, opacity: 0.8 }), // 水面半透明
+                moss: new THREE.MeshStandardMaterial({ map: mossTexture }),
+                lava: new THREE.MeshStandardMaterial({ map: lavaTexture }),
+                desert: new THREE.MeshStandardMaterial({ map: desertTexture }),
+                tile: new THREE.MeshStandardMaterial({ map: tileTexture }),
+            };
         }
 
         function generateChunk(sceneInfo, gameInfo, chunkX, chunkZ) {
@@ -363,7 +665,7 @@
             if (gameInfo.chunks.has(chunkKey)) return;
 
             const chunkData = extractChunkData(gameInfo.worldData, chunkX, chunkZ, gameInfo.chunkSize, gameInfo.cellSize);
-            const { heightData, maze, obstacles, treasures } = chunkData;
+            const { heightData, maze, obstacles, treasures, key, door, waterData } = chunkData;
 
             if (!heightData || heightData.length !== gameInfo.gridSize || !heightData.every(row => row.length === gameInfo.gridSize)) {
                 console.error(`Invalid heightData for chunk ${chunkKey}:`, heightData);
@@ -381,12 +683,36 @@
             }
             geometry.computeVertexNormals();
 
-            const chunkMesh = new THREE.Mesh(geometry, gameInfo.floorMaterial);
-            chunkMesh.position.set(
-                chunkX * gameInfo.chunkSize, // 左下角對齊
-                0,
-                chunkZ * gameInfo.chunkSize
-            );
+            
+            // 計算區塊平均高度
+            let totalHeight = 0;
+            let waterData_count = 0;
+            for (let x = 0; x < gameInfo.gridSize; x++) {
+                for (let z = 0; z < gameInfo.gridSize; z++) {
+                    totalHeight += heightData[x][z];
+                    if( waterData[x][z] )
+                        waterData_count++;
+                }
+            }
+            const avgHeight = totalHeight / (gameInfo.gridSize * gameInfo.gridSize);
+
+            // 根據平均高度選擇材質
+            let material;
+            if( waterData_count>(gameInfo.gridSize*gameInfo.gridSize/2) ) {
+                material = gameInfo.materials.water;
+            } else if (avgHeight <= 10 ) {
+                material = gameInfo.materials.water;
+            } else if (avgHeight <= 30) {
+                material = gameInfo.materials.grass;
+            } else {
+                material = gameInfo.materials.rock;
+            }
+            
+           
+            ///let material = gameInfo.materials.rock;
+            // 創建單一 Mesh
+            const chunkMesh = new THREE.Mesh(geometry, material);
+            chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
             chunkMesh.receiveShadow = true;
             sceneInfo.scene.add(chunkMesh);
 
@@ -428,7 +754,7 @@
                 }
                 //gameInfo.chunks.set(chunkKey, { mesh: chunkMesh, body: chunkBody, heightData });
 
-                const chunk = { mesh: chunkMesh, body: chunkBody, heightData, maze, obstacles, treasures };
+                const chunk = { mesh: chunkMesh, body: chunkBody, heightData, maze, obstacles, treasures, key, door };
                 gameInfo.chunks.set(chunkKey, chunk);
                 createWalls(sceneInfo, gameInfo, chunkX, chunkZ);
                 createObstacles(sceneInfo, gameInfo, chunkX, chunkZ);
@@ -452,6 +778,15 @@
                 console.log(`No chunk found at ${chunkKey} for position (${x}, ${z})`);
                 return 0;
             }
+
+            let totalHeight = 0;
+            for (let x = 0; x < gameInfo.gridSize; x++) {
+                for (let z = 0; z < gameInfo.gridSize; z++) {
+                    totalHeight += chunk.heightData[x][z];
+                }
+            }
+            const avgHeight = totalHeight / (gameInfo.gridSize * gameInfo.gridSize);
+            return avgHeight;
 
             // **旋轉 heightData 以匹配物理地面方向**
             const rotatedHeightData = [];
@@ -514,8 +849,8 @@
                         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
                         const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize / 2;
                         const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize / 2;
-                        ///const posY = getTerrainHeightAt(posX, posZ, gameInfo) + gameInfo.cellSize / 3;
-                        const posY = gameInfo.cellSize / 3;
+                        const posY = getTerrainHeightAt(posX, posZ, gameInfo);// + gameInfo.cellSize / 3;
+                        ///const posY = gameInfo.cellSize / 3;
                         wall.position.set(posX, posY, posZ);
                         wall.castShadow = wall.receiveShadow = true;
                         sceneInfo.scene.add(wall);
@@ -543,35 +878,31 @@
             const obstacleTexture = textureLoader.load(ext_resource_url + '/textures/obstacle.png');
             obstacleTexture.wrapS = obstacleTexture.wrapT = THREE.RepeatWrapping;
             obstacleTexture.repeat.set(1, 1);
-            
-            const obj_width = gameInfo.cellSize/2;
+
+            const obj_width = gameInfo.cellSize / 2;
 
             const obstacleGeometry = new THREE.BoxGeometry(obj_width, obj_width, obj_width);
             const obstacleMeshes = [], obstacleBodies = [];
-            const keyIndex = Math.floor(Math.random() * chunk.obstacles.length);
-            let doorIndex = Math.floor(Math.random() * chunk.obstacles.length);
-            //while (doorIndex === keyIndex) doorIndex = Math.floor(Math.random() * chunk.obstacles.length);
-
-            let keyPosition, doorPosition;
+            let keyMesh = null, doorMesh = null;
 
             chunk.obstacles.forEach((obstacle, index) => {
                 const material = new THREE.MeshStandardMaterial({ map: obstacleTexture });
                 const mesh = new THREE.Mesh(obstacleGeometry, material);
-                const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
-                const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
-                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width / 4;
+                const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize / 2;
+                const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize / 2;
+                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width / 3;
 
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
                 mesh.userData = {
                     durability: obstacle.durability,
                     health: obstacle.durability * 10,
-                    hidesKey: index === keyIndex,
-                    hidesDoor: index === doorIndex
+                    hidesKey: obstacle.hidesKey,
+                    hidesDoor: obstacle.hidesDoor
                 };
                 sceneInfo.scene.add(mesh);
 
-                const shape = new CANNON.Box(new CANNON.Vec3(obj_width/2, obj_width/2, obj_width/2));
+                const shape = new CANNON.Box(new CANNON.Vec3(obj_width / 2, obj_width / 2, obj_width / 2));
                 const body = new CANNON.Body({ mass: 0 });
                 body.addShape(shape);
                 body.position.set(posX, posY, posZ);
@@ -579,26 +910,30 @@
                 obstacleMeshes.push(mesh);
                 obstacleBodies.push(body);
 
-                if (index === keyIndex) keyPosition = mesh.position.clone();
-                if (index === doorIndex) doorPosition = mesh.position.clone();
+                // 如果此障礙物隱藏 key 或 door，生成對應的 mesh
+                if (obstacle.hidesKey && chunk.key) {
+                    console.log('set key');
+                    const keyGeometry = new THREE.CylinderGeometry(2, 2, 4, 16);
+                    const keyMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+                    keyMesh = new THREE.Mesh(keyGeometry, keyMaterial);
+                    keyMesh.position.set(posX, posY - 1, posZ); // 放置在障礙物上方
+                    keyMesh.visible = !chunk.key.hidden; // 根據隱藏狀態設置可見性
+                    sceneInfo.scene.add(keyMesh);
+                }
+
+                if (obstacle.hidesDoor && chunk.door) {
+                    console.log('set door');
+                    const doorGeometry = new THREE.BoxGeometry(4, 8, 4);
+                    const doorMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff, side: THREE.DoubleSide });
+                    doorMesh = new THREE.Mesh(doorGeometry, doorMaterial);
+                    doorMesh.position.set(posX, posY - 1 , posZ); // 放置在障礙物上方
+                    doorMesh.visible = !chunk.door.hidden; // 根據隱藏狀態設置可見性
+                    sceneInfo.scene.add(doorMesh);
+                }
             });
 
-            const keyGeometry = new THREE.CylinderGeometry(0.2, 0.2, 1, 16);
-            const keyMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-            const key = new THREE.Mesh(keyGeometry, keyMaterial);
-            key.position.copy(keyPosition || new THREE.Vector3());
-            key.visible = false;
-            sceneInfo.scene.add(key);
-
-            const doorGeometry = new THREE.BoxGeometry(1, 2, 1);
-            const doorMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff, side: THREE.DoubleSide });
-            const door = new THREE.Mesh(doorGeometry, doorMaterial);
-            door.position.copy(doorPosition || new THREE.Vector3());
-            door.visible = false;
-            sceneInfo.scene.add(door);
-
-            chunk.obstaclesData = { meshes: obstacleMeshes, bodies: obstacleBodies, key, door };
-            return { obstacleMeshes, obstacleBodies, key, door };
+            chunk.obstaclesData = { meshes: obstacleMeshes, bodies: obstacleBodies, key: keyMesh, door: doorMesh };
+            return { obstacleMeshes, obstacleBodies, key: keyMesh, door: doorMesh };
         }
 
         function createTreasures(sceneInfo, gameInfo, chunkX, chunkZ) {
@@ -625,7 +960,7 @@
                 const mesh = new THREE.Mesh(geometry, material);
                 const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
                 const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
-                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width/2;
+                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width/3;
 
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
@@ -641,7 +976,7 @@
             gltfLoader.load(ext_resource_url + '/3d_module/RobotExpressive.glb', (gltf) => {
                 const soldier = gltf.scene;
                 soldier.scale.set(0.5, 0.5, 0.5);
-                const startX = 1, startZ = 1; // 初始格子位置
+                const startX = (worldSize/2)/gameMaster.gameInfo.cellSize, startZ =  (worldSize/2)/gameMaster.gameInfo.cellSize; // 初始格子位置
                 const posX = startX * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
                 const posZ = startZ * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
                 const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5 || 5;
@@ -663,7 +998,7 @@
                 const body = new CANNON.Body({mass: 5});
 
                 body.addShape(shape);
-                body.position.set(posX, posY + 10, posZ); // 物理體略高於地形避免嵌入
+                body.position.set(posX, posY + 50, posZ); // 物理體略高於地形避免嵌入
                 body.linearDamping = 0.9;
                 body.angularDamping = 0.0;
                 sceneInfo.world.addBody(body);
@@ -938,6 +1273,7 @@
                             if (enemy.body === target) {
                                 enemy.health -= player.baseAttackPower + player.attackPowerBoost;
                                 arrowBody.hasHit = true;
+                                enemy.targetPosition = player.soldier.position.clone();
                                 sceneInfo.objectsToRemove.push({ mesh: arrow, body: arrowBody });
                                 if (enemy.health <= 0) {
                                     sceneInfo.objectsToRemove.push({ mesh: enemy, body: enemy.body, enemyIdx: idx });
@@ -945,6 +1281,7 @@
                             }
                         });
 
+                        
                         // 檢查所有 Chunk 的 obstacles
                         for (const [chunkKey, chunk] of gameInfo.chunks) {
                             if (chunk.obstaclesData && chunk.obstaclesData.bodies) {
@@ -955,8 +1292,16 @@
                                     arrowBody.hasHit = true;
                                     sceneInfo.objectsToRemove.push({ mesh: arrow, body: arrowBody });
                                     if (obstacle.userData.health <= 0) {
-                                        if (obstacle.userData.hidesKey) chunk.obstaclesData.key.visible = true;
-                                        if (obstacle.userData.hidesDoor) chunk.obstaclesData.door.visible = true;
+                                        if (obstacle.userData.hidesKey && chunk.obstaclesData.key) {
+                                            console.log('key found');
+                                            chunk.obstaclesData.key.visible = true;
+                                            chunk.key.hidden = false; // 更新 chunk 中的 key 狀態
+                                        }
+                                        if (obstacle.userData.hidesDoor && chunk.obstaclesData.door) {
+                                            console.log('door found');
+                                            chunk.obstaclesData.door.visible = true;
+                                            chunk.door.hidden = false; // 更新 chunk 中的 door 狀態
+                                        }
                                         sceneInfo.objectsToRemove.push({ 
                                             mesh: obstacle, 
                                             body: target, 
@@ -967,6 +1312,8 @@
                                 }
                             }
                         }
+
+                        
                     });
                 } else 
                 {
@@ -1003,6 +1350,7 @@
                             const angleDeg = Math.acos(playerForward.dot(enemyDirection)) * 180 / Math.PI;
                             if (angleDeg <= 60) {
                                 enemy.health -= player.baseAttackPower + player.attackPowerBoost;
+                                enemy.targetPosition = player.soldier.position.clone();
                                 if (enemy.health <= 0) {
                                     sceneInfo.objectsToRemove.push({ mesh: enemy, body: enemy.body, enemyIdx: idx });
                                 }
@@ -1071,11 +1419,11 @@
                 // 檢查 key 和 door
                 if (chunk.obstaclesData) {
                     const { key, door } = chunk.obstaclesData;
-                    if (key && key.visible && player.soldier.position.distanceTo(key.position) < 2) {
+                    if (key && key.visible && player.soldier.position.distanceTo(key.position) < 4) {
                         player.hasKey = true;
                         key.visible = false;
                     }
-                    if (door && door.visible && player.hasKey && player.soldier.position.distanceTo(door.position) < 2) {
+                    if (door && door.visible && player.hasKey && player.soldier.position.distanceTo(door.position) < 4) {
                         gameMaster.newGame = true;
                     }
                 }
@@ -1105,7 +1453,7 @@
                 sceneInfo.camera.rotation.y = player.soldier.rotation.y + Math.PI;
             } else if (gameMaster.cameraMode === 'topDown') {
                 const offsetY = inputInfo.cameraOffsetY(); // 動態獲取高度偏移
-                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z);
+                sceneInfo.camera.position.set(player.soldier.position.x, player.soldier.position.y + offsetY, player.soldier.position.z+10);
                 sceneInfo.camera.lookAt(player.soldier.position);
             } else if (sceneInfo.controls) {
                 sceneInfo.controls.target.copy(player.soldier.position);
@@ -1195,6 +1543,7 @@
         }
 
         function updateEnemies(sceneInfo, enemyInfo, playerInfo, gameInfo, delta, inputInfo) {
+            const alertRange = 15;
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier) return;
 
@@ -1299,6 +1648,7 @@
                     } else if (canSeePlayer(enemy, player.soldier, gameInfo.obstacleBodies, fieldOfView) && distanceToPlayer <= detectionRange) {
                         enemy.targetPosition = player.soldier.position.clone();
                         enemy.isChasing = true;
+                        alertNearbyEnemies(gameInfo.obstacleBodies, enemy, enemyInfo.enemies, player.soldier, alertRange);
                         const direction = enemy.targetPosition.clone().sub(enemy.position).normalize();
                         enemy.rotation.y += getShortestAngleDifference(enemy.rotation.y, Math.atan2(direction.x, direction.z)) * rotationSpeed * delta;
                         enemy.body.velocity.set(direction.x * chaseSpeed, enemy.body.velocity.y, direction.z * chaseSpeed);
@@ -1362,16 +1712,16 @@
             return !result.hasHit || result.distance > distance;
         }
 
-        function alertNearbyEnemies(wallBoxes, alertingEnemy, enemies, playerSoldier, alertRange) {
+        function alertNearbyEnemies(obstacleBodies, alertingEnemy, enemies, playerSoldier, alertRange) {
 
             enemies.forEach(enemy => {
                 if (enemy === alertingEnemy || enemy.isChasing) return;
                 const distance = alertingEnemy.position.distanceTo(enemy.position);
                 if (distance <= alertRange) {
-                    if (canSeePlayer(enemy, playerSoldier, wallBoxes, Math.PI * 2 / 3)) {
+                    if (1) {//canSeePlayer(enemy, playerSoldier, obstacleBodies, Math.PI * 2 / 3)) {
                         enemy.targetPosition = playerSoldier.position.clone();
                         enemy.isChasing = true;
-                        console.log('Enemy alerted!');
+                        //console.log('Enemy alerted!');
                     } else {
                         enemy.targetPosition = alertingEnemy.position.clone();
                     }
@@ -1434,8 +1784,8 @@
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
 
-            if (time - gm.gameInfo.getLastSpawnTime() > 100) {
-                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 1);
+            if (time - gm.gameInfo.getLastSpawnTime() > 10) {
+                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 50);
                 gm.gameInfo.setLastSpawnTime(time);
             }
 
@@ -1628,8 +1978,11 @@
                 if (!sceneInfo.controls) {
                     sceneInfo.controls = new OrbitControls(sceneInfo.camera, sceneInfo.renderer.domElement);
                     sceneInfo.controls.target.set(30, 0, 30);
-                    sceneInfo.camera.position.set(30, 10, 40);
+                    ///sceneInfo.camera.position.set(30, 10, 40);
+                    const player = gameMaster.playerInfo.getPlayer();
+                    sceneInfo.camera.position.set(player.soldier.position.x+10, 40, player.soldier.position.z+10)
                     sceneInfo.camera.lookAt(30, 0, 30);
+                    console.log( 'set perspective' );
                 }
             } else {
                 if (sceneInfo.controls) {
@@ -1671,7 +2024,7 @@
                 obstacleMeshes: [],
                 obstacleBodies: [],
                 treasureMeshes: new Map(),
-                worldData: generateWorldData(400, 40, 20),
+                worldData: generateWorldData(worldSize, 40, 20),
                 key: null,
                 door: null,
                 lastSpawnTime: -9999,
