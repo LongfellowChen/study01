@@ -345,7 +345,7 @@
                 const directions = [{dx: 0, dy: -2}, {dx: 0, dy: 2}, {dx: -2, dy: 0}, {dx: 2, dy: 0}];
                 for (const dir of directions) {
                     const nx = x + dir.dx, ny = y + dir.dy;
-                    if (nx > 0 && nx < worldGridSize - 1 && ny > 0 && ny < worldGridSize - 1 && maze[nx][ny] === 1) {
+                    if (nx > 0 && nx < worldGridSize - 2 && ny > 0 && ny < worldGridSize - 2 && maze[nx][ny] === 1) {
                         neighbors.push({x: nx, y: ny});
                     }
                 }
@@ -376,9 +376,9 @@
                 }
             }
 
-            for (let y = 1; y < worldGridSize - 1; y++) {
-                for (let x = 1; x < worldGridSize - 1; x++) {
-                    if (maze[x][y] === 1 && Math.random() < 0.8)
+            for (let y = 1; y < worldGridSize - 2; y++) {
+                for (let x = 1; x < worldGridSize - 2; x++) {
+                    ///if (maze[x][y] === 1 && Math.random() < 0.8)
                         maze[x][y] = 0;
                 }
             }
@@ -773,10 +773,10 @@
             const chunkZ = Math.floor( z / gameInfo.chunkSize);
             const chunkKey = `${chunkX},${chunkZ}`;
             const chunk = gameInfo.chunks.get(chunkKey);
-            
+                        
             if (!chunk || !chunk.heightData) {
                 console.log(`No chunk found at ${chunkKey} for position (${x}, ${z})`);
-                return 0;
+                return -1;
             }
 
             let totalHeight = 0;
@@ -788,6 +788,7 @@
             const avgHeight = totalHeight / (gameInfo.gridSize * gameInfo.gridSize);
             return avgHeight;
 
+            /*
             // **旋轉 heightData 以匹配物理地面方向**
             const rotatedHeightData = [];
             for (let z = 0; z < gameInfo.gridSize; z++) {
@@ -797,7 +798,8 @@
                 }
                 rotatedHeightData.push(row);
             }
-            
+            */
+
             const gridSize = gameInfo.chunkSize / gameInfo.cellSize;
             const localX = x - chunkX * gameInfo.chunkSize;
             const localZ = z - chunkZ * gameInfo.chunkSize;
@@ -838,7 +840,9 @@
             wallTexture.wrapS = wallTexture.wrapT = THREE.RepeatWrapping;
             wallTexture.repeat.set(1, 1);
 
-            const wallGeometry = new THREE.BoxGeometry(gameInfo.cellSize, gameInfo.cellSize, gameInfo.cellSize);
+            const obj_width = gameInfo.cellSize;
+
+            const wallGeometry = new THREE.BoxGeometry(obj_width, obj_width, obj_width);
             const wallMaterial = new THREE.MeshStandardMaterial({ map: wallTexture });
             const wallBoxes = [];
             const wallMeshes = [];
@@ -847,16 +851,20 @@
                 for (let j = 0; j < chunk.maze[i].length; j++) {
                     if (chunk.maze[i][j] === 1) {
                         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                        const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize / 2;
-                        const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize / 2;
-                        const posY = getTerrainHeightAt(posX, posZ, gameInfo);// + gameInfo.cellSize / 3;
-                        ///const posY = gameInfo.cellSize / 3;
+                        const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize;
+                        const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize;
+                        const height = getTerrainHeightAt(posX, posZ, gameInfo);
+                        if (height < 0) {
+                            console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
+                            continue;
+                        }
+                        const posY = height + (obj_width*1)/3;
                         wall.position.set(posX, posY, posZ);
                         wall.castShadow = wall.receiveShadow = true;
                         sceneInfo.scene.add(wall);
                         wallMeshes.push(wall);
 
-                        const wallShape = new CANNON.Box(new CANNON.Vec3(gameInfo.cellSize / 2, gameInfo.cellSize / 2, gameInfo.cellSize / 2));
+                        const wallShape = new CANNON.Box(new CANNON.Vec3(obj_width / 2, obj_width / 2, obj_width / 2));
                         const wallBody = new CANNON.Body({ mass: 0 });
                         wallBody.addShape(wallShape);
                         wallBody.position.set(posX, posY, posZ);
@@ -888,10 +896,14 @@
             chunk.obstacles.forEach((obstacle, index) => {
                 const material = new THREE.MeshStandardMaterial({ map: obstacleTexture });
                 const mesh = new THREE.Mesh(obstacleGeometry, material);
-                const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize / 2;
-                const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize / 2;
-                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width / 3;
-
+                const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize - gameInfo.cellSize;
+                const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize - gameInfo.cellSize;
+                const height = getTerrainHeightAt(posX, posZ, gameInfo);
+                if (height < 0) {
+                    console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
+                    return;
+                }
+                const posY = height + (obj_width*1)/5;
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
                 mesh.userData = {
@@ -958,10 +970,14 @@
             chunk.treasures.forEach(treasure => {
                 const material = new THREE.MeshStandardMaterial({ map: treasureTextures[treasure.type] });
                 const mesh = new THREE.Mesh(geometry, material);
-                const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
-                const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize + gameInfo.cellSize / 2 - gameInfo.chunkSize/2;
-                const posY = getTerrainHeightAt(posX, posZ, gameInfo) + obj_width/3;
-
+                const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize - gameInfo.cellSize;
+                const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize - gameInfo.cellSize;
+                const height = getTerrainHeightAt(posX, posZ, gameInfo);
+                if (height < 0) {
+                    console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
+                    return;
+                }
+                const posY = height + (obj_width*1)/5;
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
                 sceneInfo.scene.add(mesh);
@@ -977,9 +993,9 @@
                 const soldier = gltf.scene;
                 soldier.scale.set(0.5, 0.5, 0.5);
                 const startX = (worldSize/2)/gameMaster.gameInfo.cellSize, startZ =  (worldSize/2)/gameMaster.gameInfo.cellSize; // 初始格子位置
-                const posX = startX * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
-                const posZ = startZ * gameMaster.gameInfo.cellSize + gameMaster.gameInfo.cellSize / 2;
-                const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5 || 5;
+                const posX = startX * gameMaster.gameInfo.cellSize - gameMaster.gameInfo.cellSize / 2;
+                const posZ = startZ * gameMaster.gameInfo.cellSize - gameMaster.gameInfo.cellSize / 2;
+                const posY = 50;//getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+30;
                 soldier.position.set(posX, posY, posZ);
 
                 const originalMaterials = new Map();
@@ -998,7 +1014,7 @@
                 const body = new CANNON.Body({mass: 5});
 
                 body.addShape(shape);
-                body.position.set(posX, posY + 50, posZ); // 物理體略高於地形避免嵌入
+                body.position.set(posX, posY, posZ); // 物理體略高於地形避免嵌入
                 body.linearDamping = 0.9;
                 body.angularDamping = 0.0;
                 sceneInfo.world.addBody(body);
@@ -1113,6 +1129,8 @@
             player.soldier.position.y -= 1;
             player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
 
+            const terrainHeight = getTerrainHeightAt(player.soldier.position.x, player.soldier.position.z, gameInfo);
+            console.log(`dy: ${(player.body.position.y-terrainHeight).toFixed(2)}, terrainHeight: ${terrainHeight.toFixed(2)}, playerY: ${player.body.position.y.toFixed(2)}`);
             /*
             const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
             const maxHeightAboveTerrain = 1.5;
@@ -1477,7 +1495,7 @@
                 const spawnZ = (Math.floor(Math.random() - 0.5) * gameInfo.gridSize);
                 const posX = playerPosition.x + spawnX * gameInfo.cellSize + gameInfo.cellSize / 2;
                 const posZ = playerPosition.z + spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5;
+                const posY = 50;//getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5;
                 enemy.position.set(posX, posY, posZ);
                 enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
                 sceneInfo.scene.add(enemy);
@@ -1734,7 +1752,7 @@
             const targetZ = Math.floor(Math.random() * gridSize);
             const posX = targetX * cellSize + cellSize / 2;
             const posZ = targetZ * cellSize + cellSize / 2;
-            const posY = getTerrainHeightAt(posX, posZ, gameMaster.gameInfo);
+            const posY = 50;//getTerrainHeightAt(posX, posZ, gameMaster.gameInfo);
             return new THREE.Vector3(posX, posY, posZ);
         }
 
