@@ -851,8 +851,8 @@
                 for (let j = 0; j < chunk.maze[i].length; j++) {
                     if (chunk.maze[i][j] === 1) {
                         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                        const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize;
-                        const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize;
+                        const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize/2;
+                        const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize/2;
                         const height = getTerrainHeightAt(posX, posZ, gameInfo);
                         if (height < 0) {
                             console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
@@ -896,8 +896,8 @@
             chunk.obstacles.forEach((obstacle, index) => {
                 const material = new THREE.MeshStandardMaterial({ map: obstacleTexture });
                 const mesh = new THREE.Mesh(obstacleGeometry, material);
-                const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize - gameInfo.cellSize;
-                const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize - gameInfo.cellSize;
+                const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize - gameInfo.cellSize/2;
+                const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize - gameInfo.cellSize/2;
                 const height = getTerrainHeightAt(posX, posZ, gameInfo);
                 if (height < 0) {
                     console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
@@ -970,8 +970,8 @@
             chunk.treasures.forEach(treasure => {
                 const material = new THREE.MeshStandardMaterial({ map: treasureTextures[treasure.type] });
                 const mesh = new THREE.Mesh(geometry, material);
-                const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize - gameInfo.cellSize;
-                const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize - gameInfo.cellSize;
+                const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize - gameInfo.cellSize/2;
+                const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize - gameInfo.cellSize/2;
                 const height = getTerrainHeightAt(posX, posZ, gameInfo);
                 if (height < 0) {
                     console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
