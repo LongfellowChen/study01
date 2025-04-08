@@ -599,7 +599,7 @@
             world.defaultContactMaterial.friction = 0.5;
             world.defaultContactMaterial.restitution = 0.1;
 
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.2);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.02);
             scene.add(hemiLight);
 
             const spotLight = new THREE.SpotLight(0xffffff, 800);
@@ -660,6 +660,9 @@
             };
         }
 
+        // 首先添加一個全域陣列來儲存待處理的區塊
+        const pendingChunks = new Set(); // 使用 Set 避免重複
+
         function generateChunk(sceneInfo, gameInfo, chunkX, chunkZ) {
             const chunkKey = `${chunkX},${chunkZ}`;
             if (gameInfo.chunks.has(chunkKey)) return;
@@ -714,6 +717,8 @@
             const chunkMesh = new THREE.Mesh(geometry, material);
             chunkMesh.position.set(chunkX * gameInfo.chunkSize, 0, chunkZ * gameInfo.chunkSize);
             chunkMesh.receiveShadow = true;
+            chunkMesh.matrixAutoUpdate = true; // 確保矩陣會自動更新
+            chunkMesh.updateMatrix(); // 立即更新矩陣
             sceneInfo.scene.add(chunkMesh);
 
             // 創建物理
@@ -756,10 +761,11 @@
 
                 const chunk = { mesh: chunkMesh, body: chunkBody, heightData, maze, obstacles, treasures, key, door };
                 gameInfo.chunks.set(chunkKey, chunk);
-                createWalls(sceneInfo, gameInfo, chunkX, chunkZ);
-                createObstacles(sceneInfo, gameInfo, chunkX, chunkZ);
-                createTreasures(sceneInfo, gameInfo, chunkX, chunkZ);
-
+                // 加入待處理佇列而不是直接生成
+                pendingChunks.add(chunkKey);
+                //createWalls(sceneInfo, gameInfo, chunkX, chunkZ);
+                //createObstacles(sceneInfo, gameInfo, chunkX, chunkZ);
+                //createTreasures(sceneInfo, gameInfo, chunkX, chunkZ);
             } catch (e) {
                 console.error(`Error creating physics for chunk ${chunkKey}:`, e);
             }
@@ -831,6 +837,32 @@
             return height;
         }
             
+        function getExactTerrainHeight(positionx, positionz, sceneInfo, gameInfo) {
+            // 創建向下的射線
+            const raycaster = new THREE.Raycaster();
+            // 從較高的位置向下射線，確保能檢測到所有地形
+            const rayStart = new THREE.Vector3(positionx, 1000, positionz);
+            raycaster.set(rayStart, new THREE.Vector3(0, -1, 0));
+
+            // 收集所有需要檢測的地形 mesh
+            const terrainMeshes = [];
+            for (const [_, chunk] of gameInfo.chunks) {
+                if (chunk.mesh) {
+                    terrainMeshes.push(chunk.mesh);
+                }
+            }
+            // 進行射線檢測
+            const intersects = raycaster.intersectObjects(terrainMeshes, false);
+            
+            if (intersects.length > 0) {
+                // 返回最近的交點的 y 值
+                return intersects[0].point.y;
+            }
+            console.log('射線檢測未命中');
+            // 如果沒有檢測到地形，使用原始的 getTerrainHeightAt 作為備用
+            return -1; //getTerrainHeightAt(positionx, positionz, gameInfo);
+        }
+
         function createWalls(sceneInfo, gameInfo, chunkX, chunkZ) {
             const chunkKey = `${chunkX},${chunkZ}`;
             const chunk = gameInfo.chunks.get(chunkKey);
@@ -847,15 +879,16 @@
             const wallBoxes = [];
             const wallMeshes = [];
 
-            for (let i = 0; i < chunk.maze.length; i++) {
-                for (let j = 0; j < chunk.maze[i].length; j++) {
+            for (let i = 0; i < chunk.maze.length-1; i++) {
+                for (let j = 0; j < chunk.maze[i].length-1; j++) {
                     if (chunk.maze[i][j] === 1) {
                         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
                         const posX = chunkX * gameInfo.chunkSize + i * gameInfo.cellSize - gameInfo.cellSize/2;
                         const posZ = chunkZ * gameInfo.chunkSize + j * gameInfo.cellSize - gameInfo.cellSize/2;
-                        const height = getTerrainHeightAt(posX, posZ, gameInfo);
-                        if (height < 0) {
-                            console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
+                        const height = getExactTerrainHeight(posX, posZ, sceneInfo, gameInfo);
+                        if( height < 0 )
+                        {
+                            console.log('height < 0');
                             continue;
                         }
                         const posY = height + (obj_width*1)/3;
@@ -898,11 +931,12 @@
                 const mesh = new THREE.Mesh(obstacleGeometry, material);
                 const posX = chunkX * gameInfo.chunkSize + obstacle.x * gameInfo.cellSize - gameInfo.cellSize/2;
                 const posZ = chunkZ * gameInfo.chunkSize + obstacle.z * gameInfo.cellSize - gameInfo.cellSize/2;
-                const height = getTerrainHeightAt(posX, posZ, gameInfo);
-                if (height < 0) {
-                    console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
+                const height = getExactTerrainHeight(posX, posZ, sceneInfo, gameInfo);
+                if( height < 0 )
+                {
+                    console.log('height < 0');
                     return;
-                }
+                }                
                 const posY = height + (obj_width*1)/5;
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
@@ -972,12 +1006,13 @@
                 const mesh = new THREE.Mesh(geometry, material);
                 const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize - gameInfo.cellSize/2;
                 const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize - gameInfo.cellSize/2;
-                const height = getTerrainHeightAt(posX, posZ, gameInfo);
-                if (height < 0) {
-                    console.log(`Invalid height for wall at (${posX}, ${posZ}): ${height}`);
+                const height = getExactTerrainHeight(posX, posZ, sceneInfo, gameInfo);
+                if( height < 0 )
+                {
+                    console.log('height < 0');
                     return;
-                }
-                const posY = height + (obj_width*1)/5;
+                }                
+                const posY = height + (obj_width*1)/2;
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
                 sceneInfo.scene.add(mesh);
@@ -986,16 +1021,22 @@
             });
         }
 
-        function createPlayer(sceneInfo) {
+        function createPlayer(sceneInfo, gameInfo) {
             let player = null;
             const gltfLoader = new GLTFLoader();
             gltfLoader.load(ext_resource_url + '/3d_module/RobotExpressive.glb', (gltf) => {
                 const soldier = gltf.scene;
                 soldier.scale.set(0.5, 0.5, 0.5);
-                const startX = (worldSize/2)/gameMaster.gameInfo.cellSize, startZ =  (worldSize/2)/gameMaster.gameInfo.cellSize; // 初始格子位置
-                const posX = startX * gameMaster.gameInfo.cellSize - gameMaster.gameInfo.cellSize / 2;
-                const posZ = startZ * gameMaster.gameInfo.cellSize - gameMaster.gameInfo.cellSize / 2;
-                const posY = 50;//getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+30;
+                const startX = (worldSize/2)/gameInfo.cellSize, startZ =  (worldSize/2)/gameInfo.cellSize; // 初始格子位置
+                const posX = startX * gameInfo.cellSize - gameInfo.cellSize / 2;
+                const posZ = startZ * gameInfo.cellSize - gameInfo.cellSize / 2;
+                
+                /// 確保玩家腳下地形有產生
+                ///generateChunkAroundPlayer(posX, posZ, sceneInfo, gameInfo);
+
+                const height = getExactTerrainHeight(posX, posZ, sceneInfo, gameInfo);
+                const posY = height+1;
+                console.log('createPlayer posY:', posY, ' height:', height);
                 soldier.position.set(posX, posY, posZ);
 
                 const originalMaterials = new Map();
@@ -1064,15 +1105,20 @@
             return () => player;
         }
 
-        function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
-            const player = playerInfo.getPlayer();
-            if (!player || !player.soldier || !player.body) return; // 確保玩家和物理體已初始化
+        // 新增處理待生成內容的函數
+        function processPendingChunks(sceneInfo, gameInfo) {
+            for (const chunkKey of pendingChunks) {
+                const [chunkX, chunkZ] = chunkKey.split(',').map(Number);
+                createWalls(sceneInfo, gameInfo, chunkX, chunkZ);
+                createObstacles(sceneInfo, gameInfo, chunkX, chunkZ);
+                createTreasures(sceneInfo, gameInfo, chunkX, chunkZ);
+            }
+            pendingChunks.clear(); // 清空佇列
+        }
 
-            const playerPosition = player.soldier.position;
-            const chunkX = Math.floor((playerPosition.x+gameInfo.chunkSize/2) / gameInfo.chunkSize);
-            const chunkZ = Math.floor((playerPosition.z+gameInfo.chunkSize/2) / gameInfo.chunkSize);
-            const renderDistance = 1;
-
+        function generateChunkAroundPlayer(px, py, sceneInfo, gameInfo) {
+            const chunkX = Math.floor((px+gameInfo.chunkSize/2) / gameInfo.chunkSize);
+            const chunkZ = Math.floor((py+gameInfo.chunkSize/2) / gameInfo.chunkSize);
             generateChunk(sceneInfo, gameInfo, chunkX, chunkZ);
             generateChunk(sceneInfo, gameInfo, chunkX+1, chunkZ+0);
             generateChunk(sceneInfo, gameInfo, chunkX+1, chunkZ+1);
@@ -1081,23 +1127,16 @@
             generateChunk(sceneInfo, gameInfo, chunkX-1, chunkZ+0);
             generateChunk(sceneInfo, gameInfo, chunkX-1, chunkZ-1);
             generateChunk(sceneInfo, gameInfo, chunkX+0, chunkZ-1);
-            generateChunk(sceneInfo, gameInfo, chunkX+1, chunkZ-1);
+            generateChunk(sceneInfo, gameInfo, chunkX+1, chunkZ-1);        
+            return { chunkX, chunkZ };
+        }
 
-            /*
-            // 從中心點向外擴展
-            for (let distance = 0; distance <= renderDistance; distance++) {
-                // 遍歷當前層的所有區塊
-                for (let dx = -distance; dx <= distance; dx++) {
-                    for (let dz = -distance; dz <= distance; dz++) {
-                        // 只生成邊界上的區塊（即 max(|dx|, |dz|) == distance）
-                        if (Math.max(Math.abs(dx), Math.abs(dz)) === distance || distance === 0) {
-                            const cx = chunkX + dx;
-                            const cz = chunkZ + dz;
-                            generateChunk(sceneInfo, gameInfo, cx, cz);
-                        }
-                    }
-                }
-            }*/
+        function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
+            const player = playerInfo.getPlayer();
+            if (!player || !player.soldier || !player.body) return; // 確保玩家和物理體已初始化
+
+            const { chunkX, chunkZ } = generateChunkAroundPlayer(player.soldier.position.x, player.soldier.position.z, sceneInfo, gameInfo);
+            const renderDistance = 1;
 
             const maxDistance = renderDistance + 1;
             for (const [key, chunk] of gameInfo.chunks) {
@@ -1129,13 +1168,12 @@
             player.soldier.position.y -= 1;
             player.soldier.visible = gameMaster.cameraMode !== 'firstPerson';
 
-            const terrainHeight = getTerrainHeightAt(player.soldier.position.x, player.soldier.position.z, gameInfo);
-            console.log(`dy: ${(player.body.position.y-terrainHeight).toFixed(2)}, terrainHeight: ${terrainHeight.toFixed(2)}, playerY: ${player.body.position.y.toFixed(2)}`);
             /*
-            const terrainHeight = getTerrainHeightAt(player.body.position.x, player.body.position.z, gameInfo);
+            // 取得精確的地形高度
+            const terrainHeight = getExactTerrainHeight(player.body.position.x,player.body.position.z, sceneInfo, gameInfo);
+            ///console.log(`dy: ${(player.body.position.y-terrainHeight).toFixed(2)}, terrainHeight: ${terrainHeight.toFixed(2)}, playerY: ${player.body.position.y.toFixed(2)}`);
             const maxHeightAboveTerrain = 1.5;
-            const minHeightAboveTerrain = -999;
-            console.log(`dy: ${(player.body.position.y-terrainHeight).toFixed(2)}, terrainHeight: ${terrainHeight.toFixed(2)}, playerY: ${player.body.position.y.toFixed(2)}`);
+            const minHeightAboveTerrain = 0.5;
             if (player.body.position.y > terrainHeight + maxHeightAboveTerrain) {
                 player.body.position.y = terrainHeight + maxHeightAboveTerrain;
                 player.body.velocity.y = 0;
@@ -1483,7 +1521,6 @@
 
         function spawnEnemy(playerInfo, sceneInfo, gameInfo, enemyInfo, maxEnemies) {
             if (enemyInfo.enemies.length >= maxEnemies) return;
-
             const gltfLoader = new GLTFLoader();
             gltfLoader.load('https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb', (gltf) => {
                 const enemy = gltf.scene;
@@ -1495,7 +1532,8 @@
                 const spawnZ = (Math.floor(Math.random() - 0.5) * gameInfo.gridSize);
                 const posX = playerPosition.x + spawnX * gameInfo.cellSize + gameInfo.cellSize / 2;
                 const posZ = playerPosition.z + spawnZ * gameInfo.cellSize + gameInfo.cellSize / 2;
-                const posY = 50;//getTerrainHeightAt(posX, posZ, gameMaster.gameInfo)+5;
+                const height = getExactTerrainHeight(posX, posZ, sceneInfo, gameInfo);
+                const posY = height+1;
                 enemy.position.set(posX, posY, posZ);
                 enemy.traverse(child => child.isMesh && (child.castShadow = child.receiveShadow = true, child.material.color.setRGB(1, 0, 0)));
                 sceneInfo.scene.add(enemy);
@@ -1595,11 +1633,11 @@
                 enemy.mixer.update(delta);
                 enemy.position.copy(enemy.body.position);
                 enemy.position.y -= 1;
-/*
-                // 校正 Y 軸位置
-                const terrainHeight = getTerrainHeightAt(enemy.body.position.x, enemy.body.position.z, gameInfo);
+
+                /*// 校正 Y 軸位置
+                const terrainHeight = getExactTerrainHeight(enemy.body.position.x,enemy.body.position.z, sceneInfo, gameInfo);
                 const maxHeightAboveTerrain = 1.5;
-                const minHeightAboveTerrain = -999;
+                const minHeightAboveTerrain = 0.5;
                 if (enemy.body.position.y > terrainHeight + maxHeightAboveTerrain) {
                     enemy.body.position.y = terrainHeight + maxHeightAboveTerrain;
                     enemy.body.velocity.y = 0;
@@ -1607,7 +1645,8 @@
                     enemy.body.position.y = terrainHeight + minHeightAboveTerrain;
                     enemy.body.velocity.y = 0;
                 }
-*/
+                */
+
                   // 距離和視錐檢查
                 const inRange = isWithinRenderDistance(enemy.position, playerPosition, renderDistance);
                 enemy.boundingBox.setFromObject(enemy); // 動態更新邊界框
@@ -1802,8 +1841,8 @@
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
 
-            if (time - gm.gameInfo.getLastSpawnTime() > 10) {
-                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 50);
+            if (time - gm.gameInfo.getLastSpawnTime() > 5) {
+                spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
                 gm.gameInfo.setLastSpawnTime(time);
             }
 
@@ -1826,6 +1865,9 @@
 
             gm.sceneInfo.renderer.render(gm.sceneInfo.scene, gm.sceneInfo.camera);
 
+            // 在所有區塊生成完後，處理待生成的內容 
+            processPendingChunks(gm.sceneInfo, gm.gameInfo);
+    
             // 結束計算 FPS
             if (gm.stats) gm.stats.end();
 
@@ -2058,10 +2100,18 @@
             gm.stats.dom.style.left = '0px';
 
             createFloor(gm.sceneInfo, gm.gameInfo); // 初始化 floorMaterial
+
             //generateChunk(gm.sceneInfo, gm.gameInfo, 0, 0); // 生成初始區塊
+            const startX = (worldSize/2)/gm.gameInfo.cellSize;
+            const startZ =  (worldSize/2)/gm.gameInfo.cellSize; // 初始格子位置
+            const posX = startX * gm.gameInfo.cellSize - gm.gameInfo.cellSize / 2;
+            const posZ = startZ * gm.gameInfo.cellSize - gm.gameInfo.cellSize / 2;
+
+            /// 確保玩家腳下地形有產生
+            generateChunkAroundPlayer(posX, posZ, gm.sceneInfo, gm.gameInfo);
 
             gm.enemyInfo = { enemies: [] };
-            gm.playerInfo = { getPlayer: createPlayer(gm.sceneInfo) };
+            gm.playerInfo = { getPlayer: createPlayer(gm.sceneInfo,gm.gameInfo) };
             gm.inputInfo = setupEventListeners(gm.sceneInfo, gm.playerInfo);
             gm.newGame = false;
 
