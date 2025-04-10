@@ -116,6 +116,12 @@
         ///const ext_resource_url = '.';
         const textureLoader = new THREE.TextureLoader();
 
+        let uniqueObjectId = 0;
+
+        function generateUniqueId() {
+            return uniqueObjectId++;
+        }
+
         function isWithinRenderDistance(objPosition, playerPosition, renderDistance) {
             const dx = objPosition.x - playerPosition.x;
             const dz = objPosition.z - playerPosition.z;
@@ -397,9 +403,9 @@
             for (let i = 0; i < openCells.length; i++) {
                 const cell = openCells[i];
                 if (Math.random() < 0.1 && obstacles.length < worldGridSize * worldGridSize * 0.05) {
-                    obstacles.push({x: cell.x, z: cell.z, durability: Math.floor(Math.random() * 3) + 1});
+                    obstacles.push({x: cell.x, z: cell.z, durability: Math.floor(Math.random() * 3) + 1, id: generateUniqueId()});
                 } else if (Math.random() < 0.1 && treasures.length < worldGridSize * worldGridSize * 0.05) {
-                    treasures.push({x: cell.x, z: cell.z, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)]});
+                    treasures.push({x: cell.x, z: cell.z, type: ['health', 'attack', 'speed', 'bow'][Math.floor(Math.random() * 4)], id: generateUniqueId()});
                 }
             }
 
@@ -547,6 +553,7 @@
                     obstacles.push({
                         x: localX,
                         z: localZ,
+                        id: obstacle.id, // 將 ID 存入 userData
                         durability: obstacle.durability,
                         hidesKey: obstacle.hidesKey || false,
                         hidesDoor: obstacle.hidesDoor || false
@@ -558,7 +565,7 @@
                 const localX = treasure.x - startX;
                 const localZ = treasure.z - startZ;
                 if (localX >= 0 && localX < gridSize && localZ >= 0 && localZ < gridSize) {
-                    treasures.push({ x: localX, z: localZ, type: treasure.type });
+                    treasures.push({ x: localX, z: localZ, type: treasure.type, id: treasure.id });
                 }
             });
 
@@ -941,6 +948,7 @@
                 mesh.position.set(posX, posY, posZ);
                 mesh.castShadow = mesh.receiveShadow = true;
                 mesh.userData = {
+                    id: obstacle.id, // 將 ID 存入 userData
                     durability: obstacle.durability,
                     health: obstacle.durability * 10,
                     hidesKey: obstacle.hidesKey,
@@ -1004,6 +1012,9 @@
             chunk.treasures.forEach(treasure => {
                 const material = new THREE.MeshStandardMaterial({ map: treasureTextures[treasure.type] });
                 const mesh = new THREE.Mesh(geometry, material);
+                mesh.userData = {
+                    id: treasure.id, // 將 ID 存入 userDatar
+                };
                 const posX = chunkX * gameInfo.chunkSize + treasure.x * gameInfo.cellSize - gameInfo.cellSize/2;
                 const posZ = chunkZ * gameInfo.chunkSize + treasure.z * gameInfo.cellSize - gameInfo.cellSize/2;
                 const height = getExactTerrainHeight(posX, posZ, sceneInfo, gameInfo);
@@ -1131,6 +1142,37 @@
             return { chunkX, chunkZ };
         }
 
+        function handleObstacleDestruction(obstacle, target, chunk, chunkKey, idx, sceneInfo, gameInfo) {
+            const obstacleId = obstacle.userData.id;
+
+            if (obstacle.userData.hidesKey && chunk.obstaclesData.key) {
+                chunk.obstaclesData.key.visible = true;
+                chunk.key.hidden = false; // 更新 chunk 中的 key 狀態
+            }
+            if (obstacle.userData.hidesDoor && chunk.obstaclesData.door) {
+                chunk.obstaclesData.door.visible = true;
+                chunk.door.hidden = false; // 更新 chunk 中的 door 狀態
+            }
+
+            // **從 worldData.obstacles 中移除該障礙物**
+            const worldObstacleIndex = gameInfo.worldData.obstacles.findIndex(o => o.id === obstacleId);
+            if (worldObstacleIndex !== -1) {
+                gameInfo.worldData.obstacles.splice(worldObstacleIndex, 1);
+            }
+
+            // **從 chunk.obstacles 中移除該障礙物**
+            const chunkObstacleIndex = chunk.obstacles.findIndex(o => o.id === obstacleId);
+            if (chunkObstacleIndex !== -1) {
+                chunk.obstacles.splice(chunkObstacleIndex, 1);
+            }
+
+            sceneInfo.objectsToRemove.push({
+                mesh: obstacle,
+                body: target,
+                chunkKey,
+                obstacleIdx: idx
+            });
+        }
         function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier || !player.body) return; // 確保玩家和物理體已初始化
@@ -1348,22 +1390,7 @@
                                     arrowBody.hasHit = true;
                                     sceneInfo.objectsToRemove.push({ mesh: arrow, body: arrowBody });
                                     if (obstacle.userData.health <= 0) {
-                                        if (obstacle.userData.hidesKey && chunk.obstaclesData.key) {
-                                            console.log('key found');
-                                            chunk.obstaclesData.key.visible = true;
-                                            chunk.key.hidden = false; // 更新 chunk 中的 key 狀態
-                                        }
-                                        if (obstacle.userData.hidesDoor && chunk.obstaclesData.door) {
-                                            console.log('door found');
-                                            chunk.obstaclesData.door.visible = true;
-                                            chunk.door.hidden = false; // 更新 chunk 中的 door 狀態
-                                        }
-                                        sceneInfo.objectsToRemove.push({ 
-                                            mesh: obstacle, 
-                                            body: target, 
-                                            chunkKey, 
-                                            obstacleIdx 
-                                        });
+                                        handleObstacleDestruction(obstacle, target, chunk, chunkKey, obstacleIdx, sceneInfo, gameInfo);
                                     }
                                 }
                             }
@@ -1378,20 +1405,15 @@
                         if (chunk.obstaclesData && chunk.obstaclesData.meshes) {
                             chunk.obstaclesData.meshes.forEach((obstacle, idx) => {
                                 const distance = player.soldier.position.distanceTo(obstacle.position);
-                                if (distance < 3) {
+                                console.log('distance:', distance);
+                                if (distance < 8) {
                                     const obstacleDirection = obstacle.position.clone().sub(player.soldier.position).normalize();
                                     const angleDeg = Math.acos(playerForward.dot(obstacleDirection)) * 180 / Math.PI;
                                     if (angleDeg <= 60) {
                                         obstacle.userData.health -= player.baseAttackPower + player.attackPowerBoost;
+                                        const target = chunk.obstaclesData.bodies[idx];
                                         if (obstacle.userData.health <= 0) {
-                                            if (obstacle.userData.hidesKey) chunk.obstaclesData.key.visible = true;
-                                            if (obstacle.userData.hidesDoor) chunk.obstaclesData.door.visible = true;
-                                            sceneInfo.objectsToRemove.push({ 
-                                                mesh: obstacle, 
-                                                body: chunk.obstaclesData.bodies[idx], 
-                                                chunkKey, 
-                                                obstacleIdx: idx 
-                                            });
+                                            handleObstacleDestruction(obstacle, target, chunk, chunkKey, idx, sceneInfo, gameInfo);
                                         }
                                     }
                                 }
