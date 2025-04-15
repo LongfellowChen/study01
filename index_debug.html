@@ -1876,7 +1876,80 @@
 
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
+            const player = gm.playerInfo.getPlayer();
+            const weather = gm.gameInfo.weather;
+            const chunkSize = gm.gameInfo.weather.weatherRange;
 
+            // 天氣切換邏輯
+            if (time - weather.lastChangeTime > weather.changeInterval) {
+                const newWeather = weather.types[Math.floor(Math.random() * weather.types.length)];
+                weather.current = newWeather;
+                weather.lastChangeTime = time;
+
+                weather.particleSystems.rain.system.visible = newWeather === 'rain';
+                weather.particleSystems.snow.system.visible = newWeather === 'snow';
+                gm.sceneInfo.scene.fog = newWeather === 'fog' ? weather.fog : null;
+
+                const hemiLight = gm.sceneInfo.scene.children.find(child => child.isHemisphereLight);
+                if (hemiLight) {
+                    hemiLight.intensity = newWeather === 'fog' ? 0.01 : newWeather === 'rain' ? 0.015 : 0.02;
+                }
+            }
+
+            // 更新粒子系統
+            if (player && player.soldier) {
+                const playerPos = player.soldier.position;
+                const range = weather.weatherRange; // chunkSize * 3
+
+                // 更新雨天粒子
+                if (weather.current === 'rain') {
+                    const rainSystem = weather.particleSystems.rain;
+                    const positions = rainSystem.system.geometry.attributes.position.array;
+                    const velocities = rainSystem.velocities;
+
+                    // 將基準位置設為玩家位置
+                    rainSystem.basePosition.set(playerPos.x, 0, playerPos.z);
+                    rainSystem.system.position.set(playerPos.x, 0, playerPos.z);
+
+                    for (let i = 0; i < positions.length; i += 3) {
+                        positions[i + 1] += velocities[i + 1] * delta; // 應用速度
+                        if (positions[i + 1] < 0) {
+                            // 重置到以玩家為中心的隨機位置
+                            positions[i] = (Math.random() - 0.5) * range;
+                            positions[i + 1] = 50;
+                            positions[i + 2] = (Math.random() - 0.5) * range;
+                        }
+                    }
+                    rainSystem.system.geometry.attributes.position.needsUpdate = true;
+                }
+
+                // 更新下雪粒子
+                if (weather.current === 'snow') {
+                    const snowSystem = weather.particleSystems.snow;
+                    const positions = snowSystem.system.geometry.attributes.position.array;
+                    const velocities = snowSystem.velocities;
+
+                    // 將基準位置設為玩家位置
+                    snowSystem.basePosition.set(playerPos.x, 0, playerPos.z);
+                    snowSystem.system.position.set(playerPos.x, 0, playerPos.z);
+
+                    for (let i = 0; i < positions.length; i += 3) {
+                        positions[i] += velocities[i] * delta;
+                        positions[i + 1] += velocities[i + 1] * delta;
+                        positions[i + 2] += velocities[i + 2] * delta;
+                        if (positions[i + 1] < 0) {
+                            // 重置到以玩家為中心的隨機位置
+                            positions[i] = (Math.random() - 0.5) * range;
+                            positions[i + 1] = 50;
+                            positions[i + 2] = (Math.random() - 0.5) * range;
+                            velocities[i] = (Math.random() - 0.5) * 0.5;
+                            velocities[i + 2] = (Math.random() - 0.5) * 0.5;
+                        }
+                    }
+                    snowSystem.system.geometry.attributes.position.needsUpdate = true;
+                }
+            }
+            
             if (time - gm.gameInfo.getLastSpawnTime() > 5) {
                 spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
                 gm.gameInfo.setLastSpawnTime(time);
@@ -2091,7 +2164,83 @@
             }
         }
 
+        function createWeatherSystem(sceneInfo, gameInfo) {
+            const weather = gameInfo.weather;
+            const particleCount = 3000; // 適中數量，覆蓋 chunkSize * 3
+            const range = weather.weatherRange; // chunkSize * 3，例如 144
+
+            // 雨天粒子系統
+            const rainGeometry = new THREE.BufferGeometry();
+            const rainPositions = new Float32Array(particleCount * 3);
+            const rainVelocities = new Float32Array(particleCount * 3);
+            for (let i = 0; i < particleCount; i++) {
+                rainPositions[i * 3] = (Math.random() - 0.5) * range; // 相對玩家中心的偏移
+                rainPositions[i * 3 + 1] = Math.random() * 50; // 高度範圍
+                rainPositions[i * 3 + 2] = (Math.random() - 0.5) * range;
+                rainVelocities[i * 3] = 0;
+                rainVelocities[i * 3 + 1] = -(10 + Math.random() * 5); // 向下速度
+                rainVelocities[i * 3 + 2] = 0;
+            }
+            rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+            const rainMaterial = new THREE.PointsMaterial({
+                color: 0xaaaaaa,
+                size: 0.2,
+                transparent: true,
+                opacity: 0.6,
+                sizeAttenuation: true
+            });
+            const rainSystem = new THREE.Points(rainGeometry, rainMaterial);
+            rainSystem.visible = false;
+            sceneInfo.scene.add(rainSystem);
+            weather.particleSystems.rain = {
+                system: rainSystem,
+                velocities: rainVelocities,
+                basePosition: new THREE.Vector3(0, 0, 0) // 隨後綁定到玩家位置
+            };
+
+            // 下雪粒子系統
+            const snowGeometry = new THREE.BufferGeometry();
+            const snowPositions = new Float32Array(particleCount * 3);
+            const snowVelocities = new Float32Array(particleCount * 3);
+            for (let i = 0; i < particleCount; i++) {
+                snowPositions[i * 3] = (Math.random() - 0.5) * range;
+                snowPositions[i * 3 + 1] = Math.random() * 50;
+                snowPositions[i * 3 + 2] = (Math.random() - 0.5) * range;
+                snowVelocities[i * 3] = (Math.random() - 0.5) * 0.5;
+                snowVelocities[i * 3 + 1] = -(2 + Math.random() * 2);
+                snowVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
+            }
+            snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
+            const snowMaterial = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 0.3,
+                transparent: true,
+                opacity: 0.8,
+                sizeAttenuation: true
+            });
+            const snowSystem = new THREE.Points(snowGeometry, snowMaterial);
+            snowSystem.visible = false;
+            sceneInfo.scene.add(snowSystem);
+            weather.particleSystems.snow = {
+                system: snowSystem,
+                velocities: snowVelocities,
+                basePosition: new THREE.Vector3(0, 0, 0)
+            };
+
+            // 初始化濃霧
+            weather.fog = new THREE.Fog(0xaaaaaa, 10, 50);
+        }
+
         function initNewLevel(gm) {
+
+            if (gm.gameInfo?.weather?.particleSystems) {
+                Object.values(gm.gameInfo.weather.particleSystems).forEach(ps => {
+                    gm.sceneInfo.scene.remove(ps.system);
+                    ps.system.geometry.dispose();
+                    ps.system.material.dispose();
+                });
+            }
+
             const fullscreenButton = document.getElementById('fullscreenButton');
             if (fullscreenButton) {
                 fullscreenButton.addEventListener('click', toggleFullscreen);
@@ -2124,7 +2273,17 @@
                 door: null,
                 lastSpawnTime: -9999,
                 getLastSpawnTime: function() { return this.lastSpawnTime; },
-                setLastSpawnTime: function(time) { this.lastSpawnTime = time; }
+                setLastSpawnTime: function(time) { this.lastSpawnTime = time; },
+                weather: {
+                    current: 'sunny',
+                    types: ['sunny', 'rain', 'snow', 'fog'],
+                    changeInterval: 30,
+                    lastChangeTime: -9999,
+                    particleSystems: {},
+                    fog: null,
+                    weatherRange: 50
+                }
+
             };
 
             gm.stats = new Stats();
@@ -2135,6 +2294,7 @@
             gm.stats.dom.style.left = '0px';
 
             createFloor(gm.sceneInfo, gm.gameInfo); // 初始化 floorMaterial
+            createWeatherSystem(gm.sceneInfo, gm.gameInfo); // 添加天氣系統
 
             //generateChunk(gm.sceneInfo, gm.gameInfo, 0, 0); // 生成初始區塊
             const startX = (worldSize/2)/gm.gameInfo.cellSize;
@@ -2161,6 +2321,7 @@
 
             animate(gm);
         }
+
         function toggleFullscreen() {
             const elem = document.documentElement; // 使用整個頁面作為全螢幕目標
             if (!document.fullscreenElement) {
