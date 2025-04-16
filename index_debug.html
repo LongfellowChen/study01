@@ -106,6 +106,9 @@
         const globalRenderDistance = 35;
         const arrow_sub1 = 0;
         const worldSize = 500;
+        const worldChunkSize = 40; // 每個區塊大小（例如 20x20）
+        const worldCellSize = 20; // 每個格子大小
+        const worldGridSize = worldChunkSize / worldCellSize + 1; // 每個區塊的格子數（5x5）
 
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -298,7 +301,6 @@
         }
         
         function generateWorldData(worldSize, chunkSize, cellSize) {
-
             const gridSize = chunkSize / cellSize + 1;
             const worldGridSize = Math.floor(worldSize / cellSize);
             const simplex = new SimplexNoise();
@@ -627,9 +629,9 @@
         }
 
         function createFloor(sceneInfo, gameInfo) {
-            gameInfo.chunkSize = 40; // 每個區塊大小（例如 20x20）
-            gameInfo.cellSize = 20; // 每個格子大小
-            gameInfo.gridSize = gameInfo.chunkSize / gameInfo.cellSize + 1; // 每個區塊的格子數（5x5）
+            gameInfo.chunkSize = worldChunkSize; // 每個區塊大小（例如 20x20）
+            gameInfo.cellSize = worldCellSize; // 每個格子大小
+            gameInfo.gridSize = worldGridSize; // 每個區塊的格子數（5x5）
             gameInfo.chunks = new Map(); // 儲存活躍區塊（key: "x,z", value: { mesh, body }）
 
             // 加載多種材質
@@ -1880,6 +1882,7 @@
             const weather = gm.gameInfo.weather;
             const chunkSize = gm.gameInfo.chunkSize;
 
+            weather.skySphere.rotation.y += delta * 0.01; // 緩慢旋轉雲層
             // 天氣切換邏輯
             if (time - weather.lastChangeTime > weather.changeInterval) {
                 const newWeather = weather.types[Math.floor(Math.random() * weather.types.length)];
@@ -2200,7 +2203,7 @@
             };
 
             // 創建天空球體
-            const skyRadius = 300;// gameInfo.worldSize / 2; // 例如 250
+            const skyRadius = 200;// gameInfo.worldSize / 2; // 例如 250
             const skyGeometry = new THREE.SphereGeometry(skyRadius, 32, 32);
             const skyMaterial = new THREE.MeshBasicMaterial({
                 map: weather.skyTextures.sunny, // 默認為晴天貼圖
@@ -2236,7 +2239,7 @@
         function generateWeatherChunksAroundPlayer(sceneInfo, gameInfo, playerPos) {
             const chunkSize = gameInfo.chunkSize;
             const weather = gameInfo.weather;
-            const particleCount = 100;
+            const particleCount = 200;
             const range = chunkSize;
 
             // 創建圓形紋理（僅生成一次，復用）
@@ -2403,7 +2406,7 @@
                 treasures: [],
                 obstacleMeshes: [],
                 obstacleBodies: [],
-                worldData: generateWorldData(worldSize, 40, 20),
+                worldData: generateWorldData(worldSize, worldChunkSize, worldCellSize),
                 key: null,
                 door: null,
                 lastSpawnTime: -9999,
