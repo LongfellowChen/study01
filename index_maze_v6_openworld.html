@@ -384,7 +384,7 @@
 
             for (let y = 1; y < worldGridSize - 2; y++) {
                 for (let x = 1; x < worldGridSize - 2; x++) {
-                    ///if (maze[x][y] === 1 && Math.random() < 0.8)
+                    if (maze[x][y] === 1 && Math.random() < 0.5)
                         maze[x][y] = 0;
                 }
             }
@@ -1157,6 +1157,7 @@
             // **從 worldData.obstacles 中移除該障礙物**
             const worldObstacleIndex = gameInfo.worldData.obstacles.findIndex(o => o.id === obstacleId);
             if (worldObstacleIndex !== -1) {
+                console.log('remove worldObstacleIndex:', worldObstacleIndex);
                 gameInfo.worldData.obstacles.splice(worldObstacleIndex, 1);
             }
 
@@ -1173,6 +1174,7 @@
                 obstacleIdx: idx
             });
         }
+        
         function updatePlayer(playerInfo, inputInfo, sceneInfo, gameInfo, enemyInfo, delta) {
             const player = playerInfo.getPlayer();
             if (!player || !player.soldier || !player.body) return; // 確保玩家和物理體已初始化
@@ -1499,12 +1501,8 @@
                             const treasureId = treasure.id;
                             const worldTreasureIndex = gameInfo.worldData.treasures.findIndex(t => t.id === treasureId);
                             if (worldTreasureIndex !== -1) {
+                                console.log('remove worldTreasureIndex:', treasureId);
                                 gameInfo.worldData.treasures.splice(worldTreasureIndex, 1);
-                            }
-
-                            // 如果需要的話，也可以從 gameInfo 中移除
-                            if (gameInfo.treasureMeshes) {
-                                gameInfo.treasureMeshes.delete(treasureId);
                             }
                         }
                     });
@@ -1878,7 +1876,75 @@
 
             const delta = Math.min(gm.sceneInfo.clock.getDelta(), 0.1);
             const time = gm.sceneInfo.clock.getElapsedTime();
+            const player = gm.playerInfo.getPlayer();
+            const weather = gm.gameInfo.weather;
+            const chunkSize = gm.gameInfo.chunkSize;
 
+            // 天氣切換邏輯
+            if (time - weather.lastChangeTime > weather.changeInterval) {
+                const newWeather = weather.types[Math.floor(Math.random() * weather.types.length)];
+                weather.current = newWeather;
+                weather.lastChangeTime = time;
+
+                // 更新所有 chunk 的可見性
+                for (const chunk of weather.weatherChunks.values()) {
+                    chunk.rain.system.visible = newWeather === 'rain';
+                    chunk.snow.system.visible = newWeather === 'snow';
+                }
+                gm.sceneInfo.scene.fog = newWeather === 'fog' ? weather.fog : null;
+
+                const hemiLight = gm.sceneInfo.scene.children.find(child => child.isHemisphereLight);
+                if (hemiLight) {
+                    //hemiLight.intensity = newWeather === 'fog' ? 0.1 : newWeather === 'rain' ? 0.015 : 0.2;
+                }
+            }
+
+            // 更新天氣 chunk 和粒子
+            if (player && player.soldier) {
+                const playerPos = player.soldier.position;
+
+                // 生成或更新玩家周圍的天氣 chunk
+                generateWeatherChunksAroundPlayer(gm.sceneInfo, gm.gameInfo, playerPos);
+
+                // 更新每個 chunk 的粒子
+                const range = chunkSize;
+                for (const [key, chunk] of weather.weatherChunks) {
+                    // 更新雨天粒子
+                    if (weather.current === 'rain') {
+                        const positions = chunk.rain.system.geometry.attributes.position.array;
+                        const velocities = chunk.rain.velocities;
+                        for (let i = 0; i < positions.length; i += 3) {
+                            positions[i + 1] += velocities[i + 1] * delta;
+                            if (positions[i + 1] < 0) {
+                                positions[i] = (Math.random() - 0.5) * range;
+                                positions[i + 1] = 50;
+                                positions[i + 2] = (Math.random() - 0.5) * range;
+                            }
+                        }
+                        chunk.rain.system.geometry.attributes.position.needsUpdate = true;
+                    }
+
+                    // 更新下雪粒子
+                    if (weather.current === 'snow') {
+                        const positions = chunk.snow.system.geometry.attributes.position.array;
+                        const velocities = chunk.snow.velocities;
+                        for (let i = 0; i < positions.length; i += 3) {
+                            positions[i] += velocities[i] * delta;
+                            positions[i + 1] += velocities[i + 1] * delta;
+                            positions[i + 2] += velocities[i + 2] * delta;
+                            if (positions[i + 1] < 0) {
+                                positions[i] = (Math.random() - 0.5) * range;
+                                positions[i + 1] = 50;
+                                positions[i + 2] = (Math.random() - 0.5) * range;
+                                velocities[i] = (Math.random() - 0.5) * 0.5;
+                                velocities[i + 2] = (Math.random() - 0.5) * 0.5;
+                            }
+                        }
+                        chunk.snow.system.geometry.attributes.position.needsUpdate = true;
+                    }
+                }
+            }
+            
             if (time - gm.gameInfo.getLastSpawnTime() > 5) {
                 spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
                 gm.gameInfo.setLastSpawnTime(time);
@@ -2093,7 +2159,167 @@
             }
         }
 
+        function createWeatherSystem(sceneInfo, gameInfo) {
+            const weather = gameInfo.weather;
+            // 初始化濃霧
+            weather.fog = new THREE.Fog(0xdddddd, 10, 50);
+            // particleSystems 留空，由 generateWeatherChunksAroundPlayer 填充
+            weather.particleSystems = {};
+        }
+
+        function createCircleTexture(size = 64) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const context = canvas.getContext('2d');
+
+            // 繪製圓形
+            context.beginPath();
+            context.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+            context.fillStyle = 'white';
+            context.fill();
+            context.closePath();
+
+            // 創建紋理
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        function generateWeatherChunksAroundPlayer(sceneInfo, gameInfo, playerPos) {
+            const chunkSize = gameInfo.chunkSize;
+            const weather = gameInfo.weather;
+            const particleCount = 100;
+            const range = chunkSize;
+
+            // 創建圓形紋理（僅生成一次，復用）
+            if (!weather.circleTexture) {
+                weather.circleTexture = createCircleTexture();
+            }
+
+            const chunkI = Math.floor(playerPos.x / chunkSize);
+            const chunkJ = Math.floor(playerPos.z / chunkSize);
+
+            const chunksToGenerate = [];
+            for (let i = chunkI - 1; i <= chunkI + 1; i++) {
+                for (let j = chunkJ - 1; j <= chunkJ + 1; j++) {
+                    chunksToGenerate.push({ i, j });
+                }
+            }
+
+            chunksToGenerate.forEach(({ i, j }) => {
+                const key = `${i}_${j}`;
+                if (!weather.weatherChunks.has(key)) {
+                    const chunkX = i * chunkSize + chunkSize / 2;
+                    const chunkZ = j * chunkSize + chunkSize / 2;
+
+                    // 雨天粒子系統
+                    const rainGeometry = new THREE.BufferGeometry();
+                    const rainPositions = new Float32Array(particleCount * 3);
+                    const rainVelocities = new Float32Array(particleCount * 3);
+                    for (let k = 0; k < particleCount; k++) {
+                        rainPositions[k * 3] = (Math.random() - 0.5) * range;
+                        rainPositions[k * 3 + 1] = Math.random() * 50;
+                        rainPositions[k * 3 + 2] = (Math.random() - 0.5) * range;
+                        rainVelocities[k * 3] = 0;
+                        rainVelocities[k * 3 + 1] = -(10 + Math.random() * 5);
+                        rainVelocities[k * 3 + 2] = 0;
+                    }
+                    rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+                    const rainMaterial = new THREE.PointsMaterial({
+                        color: 0xaaaaaa,
+                        size: 0.3, // 稍大以模擬球形
+                        map: weather.circleTexture, // 使用圓形紋理
+                        transparent: true,
+                        opacity: 0.7, // 略高透明度增強球感
+                        alphaTest: 0.5, // 去除紋理邊緣的方形背景
+                        sizeAttenuation: true
+                    });
+                    const rainSystem = new THREE.Points(rainGeometry, rainMaterial);
+                    rainSystem.position.set(chunkX, 0, chunkZ);
+                    rainSystem.visible = weather.current === 'rain';
+                    sceneInfo.scene.add(rainSystem);
+
+                    // 下雪粒子系統
+                    const snowGeometry = new THREE.BufferGeometry();
+                    const snowPositions = new Float32Array(particleCount * 3);
+                    const snowVelocities = new Float32Array(particleCount * 3);
+                    for (let k = 0; k < particleCount; k++) {
+                        snowPositions[k * 3] = (Math.random() - 0.5) * range;
+                        snowPositions[k * 3 + 1] = Math.random() * 50;
+                        snowPositions[k * 3 + 2] = (Math.random() - 0.5) * range;
+                        snowVelocities[k * 3] = (Math.random() - 0.5) * 0.5;
+                        snowVelocities[k * 3 + 1] = -(2 + Math.random() * 2);
+                        snowVelocities[k * 3 + 2] = (Math.random() - 0.5) * 0.5;
+                    }
+                    snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
+                    const snowMaterial = new THREE.PointsMaterial({
+                        color: 0xffffff,
+                        size: 0.4, // 雪花稍大，增強球形效果
+                        map: weather.circleTexture, // 使用圓形紋理
+                        transparent: true,
+                        opacity: 0.9, // 高透明度模擬雪花輕盈感
+                        alphaTest: 0.5,
+                        sizeAttenuation: true
+                    });
+                    const snowSystem = new THREE.Points(snowGeometry, snowMaterial);
+                    snowSystem.position.set(chunkX, 0, chunkZ);
+                    snowSystem.visible = weather.current === 'snow';
+                    sceneInfo.scene.add(snowSystem);
+
+                    weather.weatherChunks.set(key, {
+                        rain: {
+                            system: rainSystem,
+                            velocities: rainVelocities
+                        },
+                        snow: {
+                            system: snowSystem,
+                            velocities: snowVelocities
+                        }
+                    });
+                }
+            });
+
+            const maxDistance = chunkSize * 1.5;
+            for (const [key, chunk] of weather.weatherChunks) {
+                const [i, j] = key.split('_').map(Number);
+                const chunkX = i * chunkSize + chunkSize / 2;
+                const chunkZ = j * chunkSize + chunkSize / 2;
+                const distance = Math.sqrt(
+                    (chunkX - playerPos.x) ** 2 + (chunkZ - playerPos.z) ** 2
+                );
+                if (distance > maxDistance) {
+                    sceneInfo.scene.remove(chunk.rain.system);
+                    sceneInfo.scene.remove(chunk.snow.system);
+                    chunk.rain.system.geometry.dispose();
+                    chunk.rain.system.material.dispose();
+                    chunk.snow.system.geometry.dispose();
+                    chunk.snow.system.material.dispose();
+                    weather.weatherChunks.delete(key);
+                }
+            }
+        }
+
         function initNewLevel(gm) {
+
+            // 清理舊粒子系統
+            if (gm.gameInfo?.weather?.weatherChunks) {
+                for (const chunk of gm.gameInfo.weather.weatherChunks.values()) {
+                    gm.sceneInfo.scene.remove(chunk.rain.system);
+                    gm.sceneInfo.scene.remove(chunk.snow.system);
+                    chunk.rain.system.geometry.dispose();
+                    chunk.rain.system.material.dispose();
+                    chunk.snow.system.geometry.dispose();
+                    chunk.snow.system.material.dispose();
+                }
+                gm.gameInfo.weather.weatherChunks.clear();
+            }
+            // 清理圓形紋理
+            if (gm.gameInfo?.weather?.circleTexture) {
+                gm.gameInfo.weather.circleTexture.dispose();
+                gm.gameInfo.weather.circleTexture = null;
+            }
+
             const fullscreenButton = document.getElementById('fullscreenButton');
             if (fullscreenButton) {
                 fullscreenButton.addEventListener('click', toggleFullscreen);
@@ -2121,13 +2347,24 @@
                 treasures: [],
                 obstacleMeshes: [],
                 obstacleBodies: [],
-                treasureMeshes: new Map(),
                 worldData: generateWorldData(worldSize, 40, 20),
                 key: null,
                 door: null,
                 lastSpawnTime: -9999,
                 getLastSpawnTime: function() { return this.lastSpawnTime; },
-                setLastSpawnTime: function(time) { this.lastSpawnTime = time; }
+                setLastSpawnTime: function(time) { this.lastSpawnTime = time; },
+                weather: {
+                    current: 'sunny',
+                    types: ['sunny', 'rain', 'snow', 'fog'],
+                    changeInterval: 30,
+                    lastChangeTime: -9999,
+                    particleSystems: {}, // 保留用於全局管理
+                    fog: null,
+                    weatherRange: 50, // chunkSize * 3，例如 144
+                    weatherChunks: new Map() // 儲存每個 chunk 的粒子系統，key 為 "i_j"
+                }
+
+
             };
 
             gm.stats = new Stats();
@@ -2138,6 +2375,7 @@
             gm.stats.dom.style.left = '0px';
 
             createFloor(gm.sceneInfo, gm.gameInfo); // 初始化 floorMaterial
+            createWeatherSystem(gm.sceneInfo, gm.gameInfo); // 添加天氣系統
 
             //generateChunk(gm.sceneInfo, gm.gameInfo, 0, 0); // 生成初始區塊
             const startX = (worldSize/2)/gm.gameInfo.cellSize;
@@ -2164,6 +2402,7 @@
 
             animate(gm);
         }
+
         function toggleFullscreen() {
             const elem = document.documentElement; // 使用整個頁面作為全螢幕目標
             if (!document.fullscreenElement) {
