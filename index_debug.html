@@ -1893,8 +1893,12 @@
                 }
 
                 // 更新天空貼圖
-                weather.skySphere.material.map = weather.skyTextures[newWeather];
-                weather.skySphere.material.needsUpdate = true;
+                if (weather.skySphere && weather.skyTextures[newWeather]) {
+                    weather.skySphere.material.map = weather.skyTextures[newWeather];
+                    weather.skySphere.material.needsUpdate = true;
+                } else {
+                    console.warn(`Sky sphere or texture missing for weather: ${newWeather}`);
+                }
 
                 // 更新濃霧
                 gm.sceneInfo.scene.fog = newWeather === 'fog' ? weather.fog : null;
@@ -1902,50 +1906,69 @@
                 // 更新光照
                 const hemiLight = gm.sceneInfo.scene.children.find(child => child.isHemisphereLight);
                 if (hemiLight) {
-                    hemiLight.intensity = newWeather === 'fog' ? 0.01 : newWeather === 'rain' ? 0.015 : 0.02;
+                    hemiLight.intensity = newWeather === 'fog' ? 0.1 : newWeather === 'rain' ? 0.2 : newWeather === 'snow' ? 0.4 : 1.0;
                 }
             }
 
-            // 更新天氣 chunk 和粒子
+            // 更新天氣 chunk 和天空球體位置
             if (player && player.soldier) {
                 const playerPos = player.soldier.position;
-                generateWeatherChunksAroundPlayer(gm.sceneInfo, gm.gameInfo, playerPos);
 
-                const range = chunkSize;
-                for (const [key, chunk] of weather.weatherChunks) {
-                    if (weather.current === 'rain') {
-                        const positions = chunk.rain.system.geometry.attributes.position.array;
-                        const velocities = chunk.rain.velocities;
-                        for (let i = 0; i < positions.length; i += 3) {
-                            positions[i + 1] += velocities[i + 1] * delta;
-                            if (positions[i + 1] < 0) {
-                                positions[i] = (Math.random() - 0.5) * range;
-                                positions[i + 1] = 50;
-                                positions[i + 2] = (Math.random() - 0.5) * range;
-                            }
-                        }
-                        chunk.rain.system.geometry.attributes.position.needsUpdate = true;
+                // 驗證玩家位置
+                if (isNaN(playerPos.x) || isNaN(playerPos.y) || isNaN(playerPos.z)) {
+                    console.warn('Invalid player position:', playerPos);
+                } else {
+                    // 更新天空球體位置，以玩家為中心
+                    if (weather.skySphere) {
+                        weather.skySphere.position.set(playerPos.x, playerPos.y, playerPos.z);
                     }
 
-                    if (weather.current === 'snow') {
-                        const positions = chunk.snow.system.geometry.attributes.position.array;
-                        const velocities = chunk.snow.velocities;
-                        for (let i = 0; i < positions.length; i += 3) {
-                            positions[i] += velocities[i] * delta;
-                            positions[i + 1] += velocities[i + 1] * delta;
-                            positions[i + 2] += velocities[i + 2] * delta;
-                            if (positions[i + 1] < 0) {
-                                positions[i] = (Math.random() - 0.5) * range;
-                                positions[i + 1] = 50;
-                                positions[i + 2] = (Math.random() - 0.5) * range;
-                                velocities[i] = (Math.random() - 0.5) * 0.5;
-                                velocities[i + 2] = (Math.random() - 0.5) * 0.5;
+                    // 更新天氣粒子
+                    generateWeatherChunksAroundPlayer(gm.sceneInfo, gm.gameInfo, playerPos);
+
+                    const range = chunkSize;
+                    for (const [key, chunk] of weather.weatherChunks) {
+                        if (weather.current === 'rain') {
+                            const positions = chunk.rain.system.geometry.attributes.position.array;
+                            const velocities = chunk.rain.velocities;
+                            for (let i = 0; i < positions.length; i += 3) {
+                                positions[i + 1] += velocities[i + 1] * delta;
+                                if (positions[i + 1] < 0) {
+                                    positions[i] = (Math.random() - 0.5) * range;
+                                    positions[i + 1] = 50;
+                                    positions[i + 2] = (Math.random() - 0.5) * range;
+                                }
+                                if (isNaN(positions[i]) || isNaN(positions[i + 1]) || isNaN(positions[i + 2])) {
+                                    console.warn(`NaN in rain particle at index ${i}`);
+                                }
                             }
+                            chunk.rain.system.geometry.attributes.position.needsUpdate = true;
                         }
-                        chunk.snow.system.geometry.attributes.position.needsUpdate = true;
+
+                        if (weather.current === 'snow') {
+                            const positions = chunk.snow.system.geometry.attributes.position.array;
+                            const velocities = chunk.snow.velocities;
+                            for (let i = 0; i < positions.length; i += 3) {
+                                positions[i] += velocities[i] * delta;
+                                positions[i + 1] += velocities[i + 1] * delta;
+                                positions[i + 2] += velocities[i + 2] * delta;
+                                if (positions[i + 1] < 0) {
+                                    positions[i] = (Math.random() - 0.5) * range;
+                                    positions[i + 1] = 50;
+                                    positions[i + 2] = (Math.random() - 0.5) * range;
+                                    velocities[i] = (Math.random() - 0.5) * 0.5;
+                                    velocities[i + 2] = (Math.random() - 0.5) * 0.5;
+                                }
+                                if (isNaN(positions[i]) || isNaN(positions[i + 1]) || isNaN(positions[i + 2])) {
+                                    console.warn(`NaN in snow particle at index ${i}`);
+                                }
+                            }
+                            chunk.snow.system.geometry.attributes.position.needsUpdate = true;
+                        }
                     }
                 }
             }
+
             
             if (time - gm.gameInfo.getLastSpawnTime() > 5) {
                 spawnEnemy(gm.playerInfo, gm.sceneInfo, gm.gameInfo, gm.enemyInfo, 30);
@@ -2171,13 +2194,13 @@
             const textureLoader = new THREE.TextureLoader();
             weather.skyTextures = {
                 sunny: new THREE.TextureLoader().load('textures/weather_sunny.png'), // 藍天白雲
-                rain: new THREE.TextureLoader().load('textures/weather_rainy.png'), // 深灰雲層
-                snow: new THREE.TextureLoader().load('textures/weather_snowy.png'), // 淺灰雲層
-                fog: new THREE.TextureLoader().load('textures/weather_foggy.png') // 灰白霧氣
+                rain: new THREE.TextureLoader().load('textures/weather_rain.png'), // 深灰雲層
+                snow: new THREE.TextureLoader().load('textures/weather_snow.png'), // 淺灰雲層
+                fog: new THREE.TextureLoader().load('textures/weather_fog.png') // 灰白霧氣
             };
 
             // 創建天空球體
-            const skyRadius = gameInfo.worldSize / 2; // 例如 250
+            const skyRadius = 300;// gameInfo.worldSize / 2; // 例如 250
             const skyGeometry = new THREE.SphereGeometry(skyRadius, 32, 32);
             const skyMaterial = new THREE.MeshBasicMaterial({
                 map: weather.skyTextures.sunny, // 默認為晴天貼圖
